@@ -10,6 +10,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.provider.Settings
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
@@ -43,16 +44,21 @@ class EditorOverlay(
     private fun dp(v: Int): Int = (v * svc.resources.displayMetrics.density).toInt()
 
     private fun chipBg(color: Int): GradientDrawable = GradientDrawable().apply {
-        shape = GradientDrawable.OVAL
+        cornerRadius = dp(18).toFloat()
         setColor(color)
-        setStroke(dp(2), Color.parseColor("#9E9E9E"))
+        setStroke(dp(1), Color.parseColor("#8E87CC"))
     }
 
     fun show() {
         if (root != null || !Settings.canDrawOverlays(svc)) return
         val dm = svc.resources.displayMetrics
-        val r = FrameLayout(svc).apply {
-            setBackgroundColor(Color.argb(70, 0, 0, 0))
+        val r = object : FrameLayout(svc) {
+            override fun dispatchKeyEvent(event: KeyEvent): Boolean =
+                svc.handleKeyEvent(event) || super.dispatchKeyEvent(event)
+        }.apply {
+            isFocusable = true
+            isFocusableInTouchMode = true
+            setBackgroundColor(Color.argb(32, 4, 8, 24))
         }
         r.addView(object : View(svc) {
             private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -71,69 +77,98 @@ class EditorOverlay(
             }
         }.apply { tag = "mappingLines" }, FrameLayout.LayoutParams(-1, -1))
 
-        // Judul
-        val title = TextView(svc).apply {
-            text = "✏️ Edit: ${profile.name}\nTap chip lalu tekan tombol • Drag untuk pindah"
-            setTextColor(Color.WHITE)
-            textSize = 13f
-            gravity = Gravity.CENTER
-            setBackgroundColor(Color.argb(180, 20, 20, 20))
-            setPadding(dp(8), dp(10), dp(8), dp(10))
+        // Header compact; game tetap terlihat di balik editor.
+        val head = LinearLayout(svc).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(16), dp(10), dp(12), dp(10))
+            background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                intArrayOf(Color.parseColor("#F0131930"), Color.parseColor("#EF242043"))).apply {
+                cornerRadius = dp(17).toFloat()
+                setStroke(dp(1), Color.parseColor("#645B9A"))
+            }
         }
-        r.addView(title, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP))
+        val heading = LinearLayout(svc).apply { orientation = LinearLayout.VERTICAL }
+        heading.addView(TextView(svc).apply {
+            text = "GEN  /  EDIT MAPPING"; textSize = 11f
+            setTextColor(Color.parseColor("#66E0E5"))
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        })
+        heading.addView(TextView(svc).apply {
+            text = profile.name; textSize = 16f; setTextColor(Color.WHITE)
+            maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+        })
+        heading.addView(TextView(svc).apply {
+            text = "Geser chip • Ketuk untuk mengatur tombol"; textSize = 10f
+            setTextColor(Color.parseColor("#BDC9DE"))
+        })
+        head.addView(heading, LinearLayout.LayoutParams(0, -2, 1f))
+        val done = TextView(svc).apply {
+            text = "✓  Selesai"; textSize = 12f
+            setTextColor(Color.WHITE); gravity = Gravity.CENTER
+            setPadding(dp(16), dp(11), dp(16), dp(11))
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#8B7DFF")); cornerRadius = dp(13).toFloat()
+            }
+            setOnClickListener { svc.store.save(); onClose() }
+        }
+        head.addView(done)
+        r.addView(head, FrameLayout.LayoutParams(-1, -2, Gravity.TOP).apply {
+            leftMargin = dp(10); topMargin = dp(12); rightMargin = dp(10)
+        })
 
-        // Toolbar bawah (geser horizontal biar muat banyak tombol)
         val bar = LinearLayout(svc).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setBackgroundColor(Color.argb(200, 20, 20, 20))
-            setPadding(dp(4), dp(8), dp(4), dp(8))
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#F01A2238"))
+                cornerRadius = dp(19).toFloat()
+                setStroke(dp(1), Color.parseColor("#3E4B70"))
+            }
         }
-        val hbar = android.widget.HorizontalScrollView(svc).apply { addView(bar) }
-        r.addView(hbar, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT,
-            Gravity.BOTTOM))
-
-        fun toolBtn(text: String, onClick: () -> Unit) {
-            bar.addView(Button(svc).apply {
-                this.text = text
-                textSize = 12f
-                setTextColor(Color.WHITE)
+        fun toolBtn(label: String, onClick: () -> Unit) {
+            bar.addView(TextView(svc).apply {
+                text = label; textSize = 12f; gravity = Gravity.CENTER
+                setTextColor(Color.WHITE); minHeight = dp(43)
+                setPadding(dp(13), dp(8), dp(13), dp(8))
                 background = GradientDrawable().apply {
-                    setColor(Color.parseColor("#2E7D32")); cornerRadius = dp(8).toFloat()
+                    setColor(Color.parseColor("#333C62")); cornerRadius = dp(12).toFloat()
                 }
                 setOnClickListener { onClick() }
-            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(44)).apply {
-                leftMargin = dp(4); rightMargin = dp(4)
-            })
+            }, LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(7) })
         }
-        toolBtn("+ Tap") { addKey("tap") }
-        toolBtn("+ Tahan") { addKey("hold") }
-        toolBtn("+ Geser") { addKey("swipe") }
-        toolBtn("+ Joystick") { addJoy() }
-        toolBtn("+ Wheel↑") { addWheel(KeyNames.MOUSE_SCROLL_UP) }
-        toolBtn("+ Wheel↓") { addWheel(KeyNames.MOUSE_SCROLL_DOWN) }
-        toolBtn("+ Kamera") { profile.camera = CameraMap(); svc.store.save(); refreshChips() }
-        toolBtn("💾") {
+        toolBtn("＋  Tap") { addKey("tap") }
+        toolBtn("＋  Hold") { addKey("hold") }
+        toolBtn("＋  Swipe") { addKey("swipe") }
+        toolBtn("＋  Joystick") { addJoy() }
+        toolBtn("＋  Scroll ↑") { addWheel(KeyNames.MOUSE_SCROLL_UP) }
+        toolBtn("＋  Scroll ↓") { addWheel(KeyNames.MOUSE_SCROLL_DOWN) }
+        toolBtn("＋  Kamera") { profile.camera = CameraMap(); svc.store.save(); refreshChips() }
+        toolBtn("Simpan") {
             svc.store.save()
-            Toast.makeText(svc, "Mapping tersimpan ✓", Toast.LENGTH_SHORT).show()
+            Toast.makeText(svc, "Mapping disimpan", Toast.LENGTH_SHORT).show()
         }
-        toolBtn("✖ Tutup") {
-            svc.store.save()
-            hide(); onClose()
+        val scroller = android.widget.HorizontalScrollView(svc).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(bar)
         }
+        r.addView(scroller, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply {
+            bottomMargin = dp(14); leftMargin = dp(10); rightMargin = dp(10)
+        })
 
         root = r
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
             overlayType,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         )
         try {
             wm.addView(r, params)
+            r.requestFocus()
         } catch (_: Exception) {
             root = null; return
         }
@@ -196,8 +231,8 @@ class EditorOverlay(
         val chip = FrameLayout(svc).apply {
             tag = "chip"
             background = chipBg(
-                if (assigningId == km.id) Color.parseColor("#B71C1C")
-                else Color.parseColor("#CC1565C0")
+                if (assigningId == km.id) Color.parseColor("#7D4677")
+                else Color.parseColor("#D04D5287")
             )
         }
         val label = TextView(svc).apply {
@@ -226,8 +261,8 @@ class EditorOverlay(
 
         val lp = FrameLayout.LayoutParams(size, size).apply {
             gravity = Gravity.TOP or Gravity.START
-            leftMargin = (km.x * w - size / 2).toInt().coerceIn(0, w - size)
-            topMargin = (km.y * h - size / 2).toInt().coerceIn(0, h - size)
+            leftMargin = (km.x * w - size / 2).toInt().coerceIn(0, (w - size).coerceAtLeast(0))
+            topMargin = (km.y * h - size / 2).toInt().coerceIn(0, (h - size).coerceAtLeast(0))
         }
         makeDraggable(chip, lp, w, h,
             onTap = { beginAssignKey(km) },
@@ -243,7 +278,7 @@ class EditorOverlay(
         val size = dp(76)
         val chip = FrameLayout(svc).apply {
             tag = "chip"
-            background = chipBg(Color.parseColor("#AA6A1B9A"))
+            background = chipBg(Color.parseColor("#C0634A9E"))
         }
         val label = TextView(svc).apply {
             text = "🖱\nCAM"
@@ -278,7 +313,7 @@ class EditorOverlay(
             textSize = 11f
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
-            background = chipBg(Color.parseColor("#CC00838F"))
+            background = chipBg(Color.parseColor("#C02B808A"))
             tag = "chip"
         }
         val lp = FrameLayout.LayoutParams(size, size).apply {
@@ -304,8 +339,8 @@ class EditorOverlay(
         val chip = FrameLayout(svc).apply {
             tag = "chip"
             background = chipBg(
-                if (assigningId?.startsWith(jm.id) == true) Color.parseColor("#B71C1C")
-                else Color.parseColor("#CC2E7D32")
+                if (assigningId?.startsWith(jm.id) == true) Color.parseColor("#7D4677")
+                else Color.parseColor("#C0347266")
             )
         }
         val filled = listOf(jm.up, jm.down, jm.left, jm.right).count { it >= 0 }
@@ -332,8 +367,8 @@ class EditorOverlay(
 
         val lp = FrameLayout.LayoutParams(size, size).apply {
             gravity = Gravity.TOP or Gravity.START
-            leftMargin = (jm.x * w - size / 2).toInt().coerceIn(0, w - size)
-            topMargin = (jm.y * h - size / 2).toInt().coerceIn(0, h - size)
+            leftMargin = (jm.x * w - size / 2).toInt().coerceIn(0, (w - size).coerceAtLeast(0))
+            topMargin = (jm.y * h - size / 2).toInt().coerceIn(0, (h - size).coerceAtLeast(0))
         }
         makeDraggable(chip, lp, w, h,
             onTap = { showJoySlots(jm) },
@@ -361,26 +396,19 @@ class EditorOverlay(
                     val dx = e.rawX - downX; val dy = e.rawY - downY
                     if (kotlin.math.abs(dx) > dp(8) || kotlin.math.abs(dy) > dp(8)) moved = true
                     if (moved) {
-                        lp.leftMargin = (startL + dx).toInt().coerceIn(0, w - size)
-                        lp.topMargin = (startT + dy).toInt().coerceIn(0, h - size)
+                        lp.leftMargin = (startL + dx).toInt().coerceIn(0, (w - size).coerceAtLeast(0))
+                        lp.topMargin = (startT + dy).toInt().coerceIn(0, (h - size).coerceAtLeast(0))
                         chip.layoutParams = lp
                     }
                 }
-                MotionEvent.ACTION_UP -> if (!moved) onTap()
+                MotionEvent.ACTION_UP -> {
+                if (!moved) onTap()
+                else onDrop((lp.leftMargin + size / 2f) / w, (lp.topMargin + size / 2f) / h)
+            }
+            MotionEvent.ACTION_CANCEL -> Unit
             }
             true
         }
-        // simpan posisi akhir saat drag selesai
-        chip.addOnLayoutChangeListener(object : View.OnLayoutChangeListener {
-            override fun onLayoutChange(v: View?, l: Int, t: Int, r: Int, b: Int,
-                                        ol: Int, ot: Int, orr: Int, ob: Int) {
-                if (moved) {
-                    onDrop(((lp.leftMargin + size / 2).toFloat() / w),
-                        ((lp.topMargin + size / 2).toFloat() / h))
-                    moved = false
-                }
-            }
-        })
     }
 
     // ---------- assign tombol ----------

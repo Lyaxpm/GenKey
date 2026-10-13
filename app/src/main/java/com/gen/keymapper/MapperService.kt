@@ -1,7 +1,13 @@
 package com.gen.keymapper
 
-import android.accessibilityservice.AccessibilityService
-import android.accessibilityservice.AccessibilityServiceInfo
+import android.app.Service
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.pm.ServiceInfo
+import android.os.IBinder
+import android.os.Build
 import android.content.Intent
 import android.content.res.Configuration
 import android.os.Handler
@@ -9,26 +15,26 @@ import android.os.Looper
 import android.provider.Settings
 import android.view.KeyEvent
 import android.view.MotionEvent
-import android.view.accessibility.AccessibilityEvent
 
 data class AssignTarget(val kind: String, val id: String, val slot: String?)
-private data class JoyState(var strokeId: Int = -1, var shizukuDown: Boolean = false, val slots: MutableSet<String> = mutableSetOf(), var tx: Float = 0f, var ty: Float = 0f)
-private data class AimStroke(val id: Int, var x: Float, var y: Float)
+private data class JoyState(var shizukuDown: Boolean = false, val slots: MutableSet<String> = mutableSetOf(), var tx: Float = 0f, var ty: Float = 0f)
 
 /**
  * Layanan inti Gen Keymapper.
  * - Menangkap tombol keyboard/mouse/gamepad (onKeyEvent)
- * - Menyuntikkan sentuhan ke game (dispatchGesture)
+ * - Menyuntikkan sentuhan melalui Shizuku (tanpa Accessibility)
  * - Mengelola overlay: tombol kontrol, Mode Mouse, editor mapping
  */
-class MapperService : AccessibilityService() {
+class MapperService : Service() {
 
     companion object {
         var instance: MapperService? = null
+        const val ACTION_STOP = "com.gen.keymapper.STOP"
+        const val ACTION_EDIT = "com.gen.keymapper.EDIT"
+        const val EXTRA_PACKAGE = "package"
     }
 
     lateinit var store: MappingStore
-    lateinit var gestures: GestureKit
 
     var currentPkg: String = ""
     var editorOpen: Boolean = false
@@ -39,42 +45,68 @@ class MapperService : AccessibilityService() {
     private var editorOverlay: EditorOverlay? = null
     private val joyStates = HashMap<String, JoyState>()
     private val pressedKeys = HashSet<Int>()
-    private val aimStrokes = HashMap<Int, AimStroke>()
     private val mainHandler = Handler(Looper.getMainLooper())
     var aimCursorX = 0f
     var aimCursorY = 0f
-    private fun privileged(): Boolean = store.useShizuku && ShizukuBridge.isReady()
+    private fun privileged(): Boolean = ShizukuBridge.isReady()
     private fun pointerToken(key: String): Int = key.hashCode() and 0x7fffffff
 
 
     // ---------- lifecycle ----------
 
-    override fun onServiceConnected() {
+    override fun onCreate() {
+        super.onCreate()
         instance = this
-        store = MappingStore(this)
-        store.load()
+        store = MappingStore(this).also { it.load() }
+        currentPkg = store.activePackage
         ShizukuBridge.initialize(this)
-        gestures = GestureKit(this)
-        try {
-            serviceInfo = serviceInfo.apply {
-                flags = flags or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
-            }
-        } catch (_: Exception) {
-        }
-        mainHandler.post { playOverlay?.hide(); playOverlay = PlayOverlay(this); playOverlay?.show() }
-        mainHandler.postDelayed(joyWatchdog, 5000)
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(NotificationChannel(
+            "gen_mapper", "GenKeymapper • Mapping aktif", NotificationManager.IMPORTANCE_LOW))
+        val launch = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val notification = Notification.Builder(this, "gen_mapper")
+            .setSmallIcon(android.R.drawable.ic_menu_manage)
+            .setContentTitle("GenKeymapper berjalan")
+            .setContentText("Profil: ${store.appLabel(currentPkg)} · tekan untuk pengaturan")
+            .setContentIntent(launch)
+            .setOngoing(true).build()
+        if (Build.VERSION.SDK_INT >= 34) {
+            startForeground(82, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        } else startForeground(82, notification)
+        refreshPlayOverlay()
     }
 
-    override fun onUnbind(intent: Intent?): Boolean {
-        mainHandler.removeCallbacks(joyWatchdog)
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_STOP -> { stopSelf(); return START_NOT_STICKY }
+            ACTION_EDIT -> openEditor()
+            else -> {
+                intent?.getStringExtra(EXTRA_PACKAGE)?.let { selectProfile(it) }
+                refreshPlayOverlay()
+            }
+        }
+        return START_NOT_STICKY
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onDestroy() {
         releaseAllInputs()
         playOverlay?.hide(); playOverlay = null
         editorOverlay?.hide(); editorOverlay = null
-        if (instance == this) instance = null
-        return super.onUnbind(intent)
+        mainHandler.removeCallbacksAndMessages(null)
+        if (instance === this) instance = null
+        super.onDestroy()
     }
 
-    override fun onInterrupt() { releaseAllInputs() }
+    fun selectProfile(pkg: String) {
+        if (currentPkg == pkg) return
+        releaseAllInputs()
+        currentPkg = pkg
+        store.activePackage = pkg
+        playOverlay?.refreshPreviews()
+    }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
@@ -84,21 +116,9 @@ class MapperService : AccessibilityService() {
 
     fun resetInputs() = releaseAllInputs()
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            event.packageName?.toString()?.let { pkg ->
-                if (pkg != currentPkg) {
-                    releaseAllInputs()
-                    currentPkg = pkg
-                    playOverlay?.refreshPreviews()
-                }
-            }
-        }
-    }
-
     // ---------- key routing ----------
 
-    override fun onKeyEvent(event: KeyEvent?): Boolean {
+    fun handleKeyEvent(event: KeyEvent?): Boolean {
         event ?: return false
         val kc = event.keyCode
         if (event.action != KeyEvent.ACTION_DOWN && event.action != KeyEvent.ACTION_UP) return false
@@ -179,22 +199,29 @@ class MapperService : AccessibilityService() {
     }
 
     private fun injectTap(x: Float, y: Float, ms: Long) {
-        if (!privileged() || !ShizukuBridge.tap(x, y, ms)) gestures.tap(x, y, ms)
+        if (privileged()) {
+            playOverlay?.passthroughFor(ms + 90)
+            ShizukuBridge.tap(x, y, ms)
+        }
     }
-
     private fun injectHold(x: Float, y: Float, ms: Long) {
-        if (!privileged() || !ShizukuBridge.tap(x, y, ms)) gestures.hold(x, y, ms)
+        if (privileged()) {
+            playOverlay?.passthroughFor(ms + 90)
+            ShizukuBridge.tap(x, y, ms)
+        }
     }
-
     private fun injectSwipe(x1: Float, y1: Float, x2: Float, y2: Float, ms: Long) {
-        if (!privileged() || !ShizukuBridge.swipe(x1, y1, x2, y2, ms)) gestures.swipe(x1, y1, x2, y2, ms)
+        if (privileged()) {
+            playOverlay?.passthroughFor(ms + 90)
+            ShizukuBridge.swipe(x1, y1, x2, y2, ms)
+        }
     }
 
     fun routeOverlayMouseButton(keyCode: Int, down: Boolean): Boolean {
         if (editorOpen || !store.mappingEnabled) return false
         val profile = store.profileFor(currentPkg) ?: return false
         if (profile.keys.none { it.keyCode == keyCode }) return false
-        return onKeyEvent(KeyEvent(if (down) KeyEvent.ACTION_DOWN else KeyEvent.ACTION_UP, keyCode))
+        return handleKeyEvent(KeyEvent(if (down) KeyEvent.ACTION_DOWN else KeyEvent.ACTION_UP, keyCode))
     }
 
     fun fireVirtualKey(keyCode: Int) {
@@ -255,120 +282,47 @@ class MapperService : AccessibilityService() {
         val cx = joy.x * dm.widthPixels
         val cy = joy.y * dm.heightPixels
         val radius = (if (joy.radiusDp > 0) joy.radiusDp else store.joyRadiusDp) * density
+        val id = pointerToken("joy:${joy.id}")
         if (st.slots.isEmpty()) {
             if (st.shizukuDown) {
-                ShizukuBridge.pointer(pointerToken("joy:${joy.id}"), MotionEvent.ACTION_UP, st.tx, st.ty)
+                ShizukuBridge.pointer(id, MotionEvent.ACTION_UP, st.tx, st.ty)
                 st.shizukuDown = false
-            }
-            if (st.strokeId != -1) {
-                gestures.dragTo(st.strokeId, st.tx, st.ty, st.tx, st.ty, true)
-                st.strokeId = -1
             }
             return
         }
+        if (!privileged()) return
         val (vx, vy) = joyVector(joy, st.slots)
         val tx = (cx + vx * radius).coerceIn(0f, dm.widthPixels.toFloat())
         val ty = (cy + vy * radius).coerceIn(0f, dm.heightPixels.toFloat())
-        if (privileged()) {
-            val id = pointerToken("joy:${joy.id}")
-            if (!st.shizukuDown) {
-                ShizukuBridge.pointer(id, MotionEvent.ACTION_DOWN, cx, cy)
-                st.shizukuDown = true
-            }
-            ShizukuBridge.pointer(id, MotionEvent.ACTION_MOVE, tx, ty)
-            st.tx = tx; st.ty = ty
-            return
+        if (!st.shizukuDown) {
+            ShizukuBridge.pointer(id, MotionEvent.ACTION_DOWN, cx, cy)
+            st.shizukuDown = true
         }
-        if (!gestures.supportsContinue) {
-            // Fallback API <26: geser diskrit tiap ada perubahan arah.
-            gestures.swipe(cx, cy, tx, ty, 300)
-            st.tx = tx; st.ty = ty
-            return
-        }
-        if (st.strokeId == -1) {
-            val id = gestures.startDrag(cx, cy, tx, ty)
-            if (id != null) { st.strokeId = id; st.tx = tx; st.ty = ty }
-        } else {
-            gestures.dragTo(st.strokeId, st.tx, st.ty, tx, ty, false)
-            st.tx = tx; st.ty = ty
-        }
-    }
-
-    /** Watchdog: jaga drag joystick tetap hidup selama tombol ditahan. */
-    private val joyWatchdog = object : Runnable {
-        override fun run() {
-            try {
-                for ((id, st) in joyStates) {
-                    if (st.strokeId != -1 && st.slots.isNotEmpty()) {
-                        gestures.dragTo(st.strokeId, st.tx, st.ty, st.tx, st.ty, false)
-                    }
-                }
-            } catch (_: Exception) {
-            }
-            mainHandler.postDelayed(this, 5000)
-        }
+        ShizukuBridge.pointer(id, MotionEvent.ACTION_MOVE, tx, ty)
+        st.tx = tx; st.ty = ty
     }
 
     // ---------- Mode Mouse: teruskan sentuhan ke game ----------
 
-    /** Dipanggil dari overlay Mode Mouse untuk setiap MotionEvent. */
+    /** Pointer dari layer mouse. Backend Shizuku diwajibkan. */
     fun forwardPointer(e: MotionEvent) {
-        try {
-            if (privileged()) {
-                when (e.actionMasked) {
-                    MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
-                        val i = e.actionIndex
-                        ShizukuBridge.pointer(100000 + e.getPointerId(i), MotionEvent.ACTION_DOWN, e.getX(i), e.getY(i))
-                    }
-                    MotionEvent.ACTION_MOVE -> for (i in 0 until e.pointerCount) {
-                        ShizukuBridge.pointer(100000 + e.getPointerId(i), MotionEvent.ACTION_MOVE, e.getX(i), e.getY(i))
-                    }
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
-                        val i = e.actionIndex
-                        ShizukuBridge.pointer(100000 + e.getPointerId(i), MotionEvent.ACTION_UP, e.getX(i), e.getY(i))
-                    }
-                    MotionEvent.ACTION_CANCEL -> ShizukuBridge.releaseAll()
-                }
-                return
+        if (!privileged()) return
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                val i = e.actionIndex
+                ShizukuBridge.pointer(100000 + e.getPointerId(i), MotionEvent.ACTION_DOWN,
+                    e.getX(i), e.getY(i))
             }
-            when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
-                    val i = e.actionIndex
-                    val pid = e.getPointerId(i)
-                    val x = e.getX(i); val y = e.getY(i)
-                    val id = gestures.startDrag(x, y, x, y)
-                    if (id != null) {
-                        aimStrokes[pid] = AimStroke(id, x, y)
-                    } else {
-                        // Fallback API <26: simpan titik awal, geser diskrit saat MOVE.
-                        aimStrokes[pid] = AimStroke(-1, x, y)
-                    }
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    for (i in 0 until e.pointerCount) {
-                        val pid = e.getPointerId(i)
-                        val st = aimStrokes[pid] ?: continue
-                        val x = e.getX(i); val y = e.getY(i)
-                        if (st.id != -1) {
-                            gestures.dragTo(st.id, st.x, st.y, x, y, false)
-                        } else {
-                            gestures.swipe(st.x, st.y, x, y, 120)
-                        }
-                        st.x = x; st.y = y
-                    }
-                }
-                MotionEvent.ACTION_CANCEL -> {
-                    aimStrokes.values.forEach { gestures.dragTo(it.id, it.x, it.y, it.x, it.y, true) }
-                    aimStrokes.clear()
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
-                    val i = e.actionIndex
-                    val pid = e.getPointerId(i)
-                    val st = aimStrokes.remove(pid) ?: return
-                    gestures.dragTo(st.id, st.x, st.y, st.x, st.y, true)
-                }
+            MotionEvent.ACTION_MOVE -> for (i in 0 until e.pointerCount) {
+                ShizukuBridge.pointer(100000 + e.getPointerId(i), MotionEvent.ACTION_MOVE,
+                    e.getX(i), e.getY(i))
             }
-        } catch (_: Exception) {
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
+                val i = e.actionIndex
+                ShizukuBridge.pointer(100000 + e.getPointerId(i), MotionEvent.ACTION_UP,
+                    e.getX(i), e.getY(i))
+            }
+            MotionEvent.ACTION_CANCEL -> ShizukuBridge.releaseAll()
         }
     }
 
@@ -398,8 +352,6 @@ class MapperService : AccessibilityService() {
     private fun releaseAllInputs() {
         pressedKeys.clear()
         joyStates.clear()
-        aimStrokes.clear()
-        if (::gestures.isInitialized) gestures.releaseAll()
         ShizukuBridge.releaseAll()
     }
 

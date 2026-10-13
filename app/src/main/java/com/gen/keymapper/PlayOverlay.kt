@@ -4,9 +4,12 @@ import android.content.Context
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
+import android.os.Handler
+import android.os.Looper
 import android.os.Build
 import android.provider.Settings
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
@@ -33,16 +36,25 @@ class PlayOverlay(private val svc: MapperService) {
     var lookMode = false
         private set
 
+    private var keySink: View? = null
     private var ctrlView: View? = null
     private var ctrlParams: WindowManager.LayoutParams? = null
     private var aimView: AimPadView? = null
+    private var aimParams: WindowManager.LayoutParams? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val restoreMouse = Runnable {
+        val view = aimView ?: return@Runnable
+        val lp = aimParams ?: return@Runnable
+        lp.flags = lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+        try { wm.updateViewLayout(view, lp) } catch (_: Exception) {}
+    }
     private var popupView: View? = null
     private val previewViews = mutableListOf<View>()
 
     private fun pillBg(color: Int): GradientDrawable = GradientDrawable().apply {
         shape = GradientDrawable.OVAL
         setColor(color)
-        setStroke(dp(2), Color.parseColor("#9E9E9E"))
+        setStroke(dp(2), Color.parseColor("#A6A0FF"))
     }
 
     private fun dp(v: Int): Int = (v * svc.resources.displayMetrics.density).toInt()
@@ -52,9 +64,9 @@ class PlayOverlay(private val svc: MapperService) {
     fun show() {
         if (ctrlView != null || !Settings.canDrawOverlays(svc)) return
         val btn = Button(svc).apply {
-            text = "🎮"
-            textSize = 20f
-            background = pillBg(Color.parseColor("#CC222222"))
+            text = "GEN"
+            textSize = 13f
+            background = pillBg(Color.parseColor("#E53D386F"))
             setTextColor(Color.WHITE)
             val s = dp(56)
             layoutParams = FrameLayout.LayoutParams(s, s)
@@ -88,6 +100,7 @@ class PlayOverlay(private val svc: MapperService) {
         }
         ctrlView = btn; ctrlParams = params
         try { wm.addView(btn, params) } catch (_: Exception) { ctrlView = null }
+        showKeySink()
         refreshPreviews()
     }
 
@@ -98,7 +111,33 @@ class PlayOverlay(private val svc: MapperService) {
         lookMode = false
         ctrlView?.let { try { wm.removeView(it) } catch (_: Exception) {} }
         ctrlView = null; ctrlParams = null
+        keySink?.let { try { wm.removeView(it) } catch (_: Exception) {} }
+        keySink = null
     }
+
+    /**
+     * Jendela fokus kecil untuk keyboard fisik tanpa Accessibility. Android dapat
+     * memindahkan fokus ketika game disentuh; ketuk tombol GEN untuk merebutnya lagi.
+     * Ini bukan raw global input monitoring dan tidak menjamin seluruh perangkat.
+     */
+    private fun showKeySink() {
+        if (keySink != null) return
+        val sink = object : View(svc) {
+            override fun dispatchKeyEvent(event: KeyEvent): Boolean =
+                svc.handleKeyEvent(event) || super.dispatchKeyEvent(event)
+        }.apply { isFocusable = true; isFocusableInTouchMode = true }
+        val lp = WindowManager.LayoutParams(dp(2), dp(2), overlayType,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM,
+            PixelFormat.TRANSLUCENT).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = 0; y = 0
+        }
+        try { wm.addView(sink, lp); keySink = sink; sink.requestFocus() }
+        catch (_: Exception) { keySink = null }
+    }
+    private fun requestKeyboardFocus() { keySink?.requestFocus() }
 
     // ---------- popup menu ----------
 
@@ -106,64 +145,82 @@ class PlayOverlay(private val svc: MapperService) {
         dismissPopup()
         val layout = LinearLayout(svc).apply {
             orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(15), dp(12), dp(12))
             background = GradientDrawable().apply {
-                setColor(Color.parseColor("#EE1B1B1B"))
-                cornerRadius = dp(12).toFloat()
-                setStroke(dp(2), Color.parseColor("#9E9E9E"))
+                setColor(Color.parseColor("#F2162036"))
+                cornerRadius = dp(20).toFloat()
+                setStroke(dp(1), Color.parseColor("#5C628B"))
             }
-            setPadding(dp(8), dp(8), dp(8), dp(8))
         }
-        fun addBtn(text: String, onClick: () -> Unit) {
-            layout.addView(Button(svc).apply {
-                this.text = text
-                textSize = 13f
+        layout.addView(TextView(svc).apply {
+            text = "GEN  /  QUICK MENU"; textSize = 11f
+            setTextColor(Color.parseColor("#72E6E2"))
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        })
+        layout.addView(TextView(svc).apply {
+            text = svc.store.appLabel(svc.currentPkg)
+            textSize = 15f; setTextColor(Color.WHITE)
+            setPadding(0, dp(5), 0, dp(11))
+        })
+        fun addBtn(label: String, primary: Boolean = false, onClick: () -> Unit) {
+            layout.addView(TextView(svc).apply {
+                text = label
+                textSize = 12f; gravity = Gravity.CENTER_VERTICAL
                 setTextColor(Color.WHITE)
+                setPadding(dp(13), dp(10), dp(10), dp(10))
                 background = GradientDrawable().apply {
-                    setColor(Color.parseColor("#333333"))
-                    cornerRadius = dp(8).toFloat()
+                    setColor(Color.parseColor(if (primary) "#7064D9" else "#303B5D"))
+                    cornerRadius = dp(11).toFloat()
                 }
-                setOnClickListener { onClick(); dismissPopup() }
-            }, LinearLayout.LayoutParams(dp(190), LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                bottomMargin = dp(6)
-            })
+                setOnClickListener { dismissPopup(); onClick() }
+            }, LinearLayout.LayoutParams(-1, dp(43)).apply { bottomMargin = dp(6) })
         }
-        addBtn(if (aimMode) "🖱️ Mode Mouse: ON" else "🖱️ Mode Mouse: OFF") {
-            setAimMode(!aimMode)
-            Toast.makeText(svc, if (aimMode) "Mode Mouse AKTIF: klik = tap, drag = geser" else "Mode Mouse mati", Toast.LENGTH_SHORT).show()
+        addBtn("✎   Buka editor mapping", true) { svc.openEditor() }
+        addBtn("⌨   Fokus ulang keyboard") { requestKeyboardFocus() }
+        addBtn(if (svc.store.mappingEnabled) "Ⅱ   Nonaktifkan mapping" else "▷   Aktifkan mapping") {
+            svc.store.mappingEnabled = !svc.store.mappingEnabled
+            svc.resetInputs(); refreshPreviews()
         }
-        addBtn(if (lookMode) "🎯 Kamera Mouse: ON" else "🎯 Kamera Mouse: OFF") {
+        addBtn(if (svc.store.showChips) "◉   Sembunyikan indikator" else "◎   Tampilkan indikator") {
+            svc.store.showChips = !svc.store.showChips; refreshPreviews()
+        }
+        addBtn(if (aimMode) "◌   Tutup mouse beta" else "◌   Mouse beta (eksperimental)") {
+            if (!svc.store.mappingEnabled) return@addBtn
+            if (!aimMode && !ShizukuBridge.isReady()) {
+                Toast.makeText(svc, "Jalankan Shizuku untuk mode mouse", Toast.LENGTH_SHORT).show()
+            } else setAimMode(!aimMode)
+        }
+        addBtn(if (lookMode) "⌖   Kamera: aktif" else "⌖   Kamera: nonaktif") {
             lookMode = !lookMode
             if (lookMode && !aimMode) setAimMode(true)
-            Toast.makeText(svc, "Mode kamera berbasis hover: eksperimental; Shizuku disarankan", Toast.LENGTH_SHORT).show()
+            Toast.makeText(svc, "Mouse-look bersifat eksperimental", Toast.LENGTH_SHORT).show()
         }
-        addBtn("✏️ Edit Mapping") { svc.openEditor() }
-        addBtn(if (svc.store.showChips) "👁️ Petunjuk: ON" else "👁️ Petunjuk: OFF") {
-            svc.store.showChips = !svc.store.showChips
-            refreshPreviews()
+        addBtn("⇄   Ganti profil berikutnya") {
+            val games = svc.store.profiles.keys.toList()
+            if (games.isNotEmpty()) {
+                val index = games.indexOf(svc.currentPkg)
+                svc.selectProfile(games[(index + 1) % games.size])
+                Toast.makeText(svc, "Profil: ${svc.store.appLabel(svc.currentPkg)}", Toast.LENGTH_SHORT).show()
+            }
         }
-        addBtn(if (svc.store.mappingEnabled) "⏸️ Mapping: ON" else "▶️ Mapping: OFF") {
-            svc.store.mappingEnabled = !svc.store.mappingEnabled
-            svc.resetInputs()
-            refreshPreviews()
-            Toast.makeText(svc, if (svc.store.mappingEnabled) "Mapping aktif" else "Mapping nonaktif", Toast.LENGTH_SHORT).show()
-        }
-        val params = WindowManager.LayoutParams(
-            dp(206), WindowManager.LayoutParams.WRAP_CONTENT, overlayType,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-            PixelFormat.TRANSLUCENT
-        ).apply {
+        addBtn("✕   Tutup overlay") { svc.stopSelf() }
+        val params = WindowManager.LayoutParams(dp(246), -2, overlayType,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT).apply {
             gravity = Gravity.TOP or Gravity.START
             val cp = ctrlParams
-            x = (cp?.x ?: dp(12)) + dp(64)
-            y = cp?.y ?: dp(160)
+            x = ((cp?.x ?: dp(12)) + dp(62)).coerceAtMost(
+                (svc.resources.displayMetrics.widthPixels - dp(254)).coerceAtLeast(0))
+            y = (cp?.y ?: dp(160)).coerceAtMost(
+                (svc.resources.displayMetrics.heightPixels - dp(360)).coerceAtLeast(0))
         }
-        popupView = layout
-        try { wm.addView(layout, params) } catch (_: Exception) { popupView = null }
+        try { wm.addView(layout, params); popupView = layout }
+        catch (_: Exception) { popupView = null }
     }
 
     private fun dismissPopup() {
         popupView?.let { try { wm.removeView(it) } catch (_: Exception) {} }
         popupView = null
+        requestKeyboardFocus()
     }
 
     // ---------- penanda mapping saat bermain (tidak menangkap sentuhan) ----------
@@ -188,17 +245,17 @@ class PlayOverlay(private val svc: MapperService) {
                 setTextColor(Color.WHITE)
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
-                    setColor(Color.parseColor(if (joy) "#504CAF50" else "#50429EFF"))
+                    setColor(Color.parseColor(if (joy) "#6434A88F" else "#665D5EC6"))
                     setStroke(dp(1), Color.WHITE)
                 }
             }
-            val lp = WindowManager.LayoutParams(size, size, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            val lp = WindowManager.LayoutParams(size, size, overlayType,
                 WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
                 PixelFormat.TRANSLUCENT).apply {
                 gravity = Gravity.TOP or Gravity.START
                 this.x = (x * dm.widthPixels - size / 2).toInt().coerceAtLeast(0)
                 this.y = (y * dm.heightPixels - size / 2).toInt().coerceAtLeast(0)
-                alpha = 0.5f
+                alpha = 0.65f
             }
             try { wm.addView(chip, lp); previewViews.add(chip) } catch (_: Throwable) {}
         }
@@ -224,6 +281,7 @@ class PlayOverlay(private val svc: MapperService) {
                 PixelFormat.TRANSLUCENT
             )
             aimView = v
+            aimParams = params
             try {
                 wm.addView(v, params)
                 // pastikan tombol kontrol tetap di atas
@@ -231,11 +289,23 @@ class PlayOverlay(private val svc: MapperService) {
                     try { wm.removeView(cv) } catch (_: Exception) {}
                     ctrlParams?.let { wm.addView(cv, it) }
                 }
-            } catch (_: Exception) { aimMode = false; aimView = null }
+            } catch (_: Exception) { aimMode = false; aimView = null; aimParams = null }
         } else {
+            mainHandler.removeCallbacks(restoreMouse)
             aimView?.let { try { wm.removeView(it) } catch (_: Exception) {} }
             aimView = null
+            aimParams = null
         }
+    }
+
+    /** Sementara biarkan event sintetis Shizuku jatuh ke game, bukan ke overlay. */
+    fun passthroughFor(ms: Long) {
+        val v = aimView ?: return
+        val lp = aimParams ?: return
+        mainHandler.removeCallbacks(restoreMouse)
+        lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        try { wm.updateViewLayout(v, lp) } catch (_: Exception) {}
+        mainHandler.postDelayed(restoreMouse, ms.coerceIn(120, 600))
     }
 
     /** Lapisan fullscreen Mode Mouse: teruskan semua sentuhan ke game via gesture. */
@@ -303,6 +373,10 @@ class PlayOverlay(private val svc: MapperService) {
                     return true
                 }
             }
+            // Fullscreen overlays can receive their own injected touchscreen events.
+            // Do not re-inject them: avoids an input feedback loop on Android 15.
+            if (e.isFromSource(android.view.InputDevice.SOURCE_TOUCHSCREEN)) return true
+            passthroughFor(180)
             svc.forwardPointer(e)
             return true
         }

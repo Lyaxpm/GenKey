@@ -1,71 +1,53 @@
-# GenKeymapper v2.0 — Android 15 + Shizuku
+# GenKeymapper 2.1 — UI baru, Android 15, Shizuku, tanpa Accessibility
 
-Aplikasi keymapper **independen**, tidak memakai kode/fitur premium ataupun lisensi K2er.
-Versi ini memodifikasi source `GenKeymapper-v1.0-source.zip` yang diberikan pemilik proyek.
-Semua fitur aplikasi ini gratis; tidak ada akun, billing, internet, analytics, atau VIP.
+Modifikasi independen dari ZIP `GenKeymapper-v2_0-fixed-source.zip` milik pengguna. Desain dan sumber tetap GenKeymapper; [KeySync](https://github.com/aka-munan/keysync) digunakan sebagai referensi pola alur kerja **Shizuku → pemilihan game → overlay mapping**, tanpa menyalin UI maupun kode proyek itu.
 
-## Fitur
+## Perubahan utama
 
-- Target SDK 35 (Android 15), minimum SDK 26 (Android 8.0).
-- Memperbaiki `canPerformGestures=true` dan implementasi stroke kontinu Accessiblity.
-- Pemrosesan keyboard/gamepad per-key, mode tap/hold/swipe, mapping WASD joystick 8 arah.
-- Overlay chip permainan bertipe `TYPE_ACCESSIBILITY_OVERLAY` (tidak bisa disentuh), editor chip drag-and-drop, endpoint swipe `END` yang dapat digeser, dan assignment hardware key.
-- Overlay mouse untuk klik, tap, drag, scroll wheel ke mapping; Kamera Mouse (hover-based, eksperimental).
-- Shizuku v13 `UserService` yang menyuntikkan `MotionEvent` multi-pointer dengan InputManager.
-- Profil per package game, templat MMORPG (WASD, Q/E/R/F/Space/1–4, kamera).
-- Pengaturan durasi dan sensitivitas, ekspor/impor profil JSON.
-- Fallback Accessibility apabila Shizuku tidak aktif.
+- **Menghilangkan ketergantungan Accessibility sepenuhnya**: komponen `BIND_ACCESSIBILITY_SERVICE`, deklarasi XML dan `GestureKit` dihapus. Backend injeksi sentuhan kini **Shizuku-only**.
+- `MapperService` adalah foreground service normal (`specialUse`) dengan notifikasi aktif sesuai persyaratan target SDK 35. Hanya dimulai oleh tindakan pengguna dari Activity terlihat.
+- Dashboard dark gaming baru: kontrol utama, indikator Shizuku/overlay, pemilihan aplikasi, profil permainan, impor/ekspor, pengaturan, kartu tindakan.
+- Overlay `TYPE_APPLICATION_OVERLAY` untuk tombol GEN, menu cepat, pratinjau chip, dan editor drag-and-drop fullscreen. Tidak ada lagi `TYPE_ACCESSIBILITY_OVERLAY`.
+- Editor menyimpan posisi **saat ACTION_UP** (bukan setiap layout-change), mendukung Tap/Hold/Swipe/Joystick/Kamera/Scroll, assign keyboard atau tombol mouse.
+- Keyboard ditangkap melalui jendela overlay kecil yang memiliki fokus. Saat game mengambil kembali fokus, tekan tombol **GEN → Fokus ulang keyboard**. Ini *bukan* raw global input capture.
+- Shizuku UserService mengirim perintah pointer multitouch memakai InputManager Android (reflection); keyboard/mouse mapping tetap tergantung kondisi window focus dan kompatibilitas firmware.
+- Profil dipilih **secara eksplisit**, tanpa membaca aplikasi foreground lewat Accessibility. Profil baru langsung disimpan (memperbaiki bug `getOrPut` sebelum `save()`).
+- Preset MMORPG: analog WASD, Q/E/R/F, Space, angka 1–4, area kamera. Profil juga dapat dibackup sebagai JSON.
+- Mode mouse fullscreen masih **beta/eksperimental**. Saat input Shizuku dipicu, layer menangkap mouse dilepas sementara agar sentuhan sintetis tidak berulang masuk ke overlay. Mode ini tidak sama dengan *relative pointer capture* atau global mouse listener.
 
-## Penting: cakupan dan keterbatasan
+## Keterbatasan yang penting
 
-**Source belum diuji di perangkat Android 15 sebenarnya, dan APK belum dikompilasi di lingkungan pengembangan ini.**
-Hasil build CI + pengujian perangkat diperlukan sebelum menyatakan fitur *working*.
+- **Belum ada APK yang sukses dibangun/dijalankan di perangkat dalam lingkungan kerja ini**. UI dan backend perlu diuji pada Android 15 nyata sebelum dinyatakan stabil.
+- Saat game mengambil fokus, window overlay kecil tidak selalu menerima keyboard fisik. Mengetuk **Fokus ulang keyboard** dapat membantu tetapi tidak menjamin kompatibilitas semua game atau ROM.
+- Mouse-look absolut (hover) bisa mentok tepi layar; native *relative mouse capture* belum diimplementasikan.
+- Mode mouse beta fullscreen menangkap gesture pada lapisannya; interaksi touchscreen langsung dengan game dapat terganggu. Matikan saat ingin bermain dengan sentuhan asli.
+- Status Shizuku `Terhubung` hanya berarti UserService tersedia, **bukan bukti game menerima injeksi**.
+- Shizuku yang dimulai lewat Wireless Debugging biasanya harus dinyalakan ulang setelah reboot.
+- Game tertentu dapat memblokir overlay dan injeksi input; tidak ada fitur bypass anti-cheat, lisensi, atau perlindungan game.
 
-- `UserService` Shizuku menggunakan Android hidden API (reflection `InputManagerGlobal` / `InputManager`); dukungan bergantung versi firmware dan izin shell perangkat. UI `Terhubung` belum membuktikan gesture sudah berhasil diterima game.
-- Beberapa game MMO melarang input sintetis/overlay atau memblokir touch ketika input berasal dari Accessibility/shell.
-- `dispatchGesture` Accessibility dapat membatalkan gesture lain. Shizuku disarankan untuk multitouch, hold dan gerakan simultan.
-- `Kamera Mouse` memakai **hover mouse absolut**, bukan hardware pointer capture relatif penuh. Kursor bisa mentok tepi layar; karakteristik swipe kamera perlu dites per game. Kecepatan/latensi tidak dijanjikan identik K2er.
-- Overlay Mode Mouse fullscreen akan mencegat sentuhan asli dan meneruskannya ulang; mode ini bersifat opsional.
-- Shizuku yang berjalan melalui Wireless Debugging perlu diaktifkan lagi setelah boot ulang (non-root).
-- Saat instalasi sideload, Android mungkin mengunci akses Accessibility melalui **Restricted settings**. Jika opsi tidak dapat diaktifkan, buka Settings > Apps > Gen Keymapper > menu tiga titik > Allow restricted settings (bila tersedia), lalu aktifkan service Accessibility.
+## Cara memakai (Android 15)
 
-## Build APK melalui GitHub Actions — tanpa PC
+1. Pasang Shizuku. Mulai via Wireless Debugging lalu izinkan akses ketika GenKeymapper meminta.
+2. Buka GenKeymapper, aktifkan **Display over other apps**. **Tidak perlu Accessibility.**
+3. Tambahkan game dari daftar, pilih profil; opsional terapkan **Preset MMORPG**.
+4. Tekan **Pilih & edit** untuk membuka game dan menampilkan editor overlay, atau **Mainkan** untuk langsung menggunakan profil.
+5. Geser chip ke tombol di HUD; ketuk chip untuk menetapkan keyboard/mouse. Swipe punya titik `END`. Joystick perlu 4 arah.
+6. Tekan **Selesai**. Tombol **GEN** melayang membuka menu cepat untuk mengedit ulang, fokus keyboard, serta menampilkan/menyembunyikan indikator.
+7. Uji mode tap/hold/WASD pada game yang mengizinkan mapping. Mode mouse diberi label beta sampai lolos pengujian perangkat.
 
-1. Buat repository GitHub baru, masukkan **isi ZIP** ini ke root repository (termasuk folder tersembunyi `.github/workflows/`).
-2. Buka tab **Actions** > **Build GenKeymapper Android APK** > **Run workflow**.
-3. Setelah workflow berhasil, unduh artifact `GenKeymapper-Android15-Debug-APK` dan pasang `app-debug.apk` di Android.
-4. Ini APK debug untuk uji coba. Untuk distribusi gunakan keystore release milikmu sendiri, jangan berbagi keystore.
+## Build APK tanpa PC
 
-Pada sistem yang sudah memiliki Android SDK 35, JDK 17 dan Gradle 8.11.1:
+Unggah **isi ZIP** ini ke root sebuah repo GitHub, termasuk `.github/workflows/build.yml`.
+Buka **Actions → Build GenKeymapper Android APK → Run workflow**. Setelah workflow sukses, unduh artifact `GenKeymapper-Android15-Debug-APK`. Alur build menggunakan JDK 17, Gradle 8.11.1, SDK 35.
+
+Secara lokal (bila Gradle dan Android SDK tersedia):
 
 ```bash
 gradle --no-daemon :app:assembleDebug
 ```
 
-## Menjalankan
+> Pengujian build harus benar-benar berhasil sebelum APK dibagikan ke orang lain. Jangan menganggap ZIP source sebagai APK siap instal.
 
-1. Pasang dan mulai **Shizuku** dari https://shizuku.rikka.app/ (pilih Wireless Debugging untuk Android 15 tanpa root).
-2. Buka Gen Keymapper, aktifkan izin overlay dan layanan Accessibility.
-3. Pilih **Hubungkan / Minta Izin Shizuku**, setujui izin di aplikasi Shizuku.
-4. Pastikan status `Terhubung` dan backend utama `Shizuku` (bisa diganti ke Accessibility).
-5. Sambungkan keyboard/mouse OTG/Bluetooth.
-6. Tambah profil game lewat daftar aplikasi, lalu pilih **MMORPG** untuk membuat preset.
-7. Jalankan game, ketuk ikon overlay 🎮, pilih **Edit Mapping** dan pindahkan chip ke posisi kontrol HUD yang benar. Untuk swipe, geser titik **END** ke titik tujuan. Simpan.
-8. Untuk kontrol kamera, tambahkan chip **Kamera**, geser ke area kamera game; aktifkan **Mode Mouse** dan **Kamera Mouse**.
-9. Coba di game offline/ruang latihan dulu, lalu sesuaikan sensitivitas.
+## Struktur
 
-## Struktur kode
-
-- `app/src/main/java/com/gen/keymapper/MapperService.kt`: key routing, pengelolaan joystick, status game, overlay.
-- `ShellInputService.kt`: proses privileged Shizuku, injeksi multi-pointer.
-- `ShizukuBridge.kt`: izin Shizuku, bind UserService, perintah IPC dan fallback.
-- `GestureKit.kt`: fallback gesture Accessibility API 26+.
-- `PlayOverlay.kt`: tombol floating, petunjuk chip saat bermain, kontrol mouse.
-- `EditorOverlay.kt`: editor visual drag-drop chip dan area kamera.
-- `MappingStore.kt` + `Models.kt`: profil, konfigurasi, JSON impor/ekspor.
-- `.github/workflows/build.yml`: build APK debug dalam GitHub Actions.
-
-## Catatan keamanan dan kompatibilitas
-
-Tidak mencoba mem-bypass pemeriksaan anti-cheat, pembatasan OEM, atau sistem lisensi pihak ketiga.
-Gunakan mapping hanya ketika diizinkan oleh ketentuan game.
+`MainActivity.kt`: dashboard; `MapperService.kt`: service notifikasi dan key routing; `EditorOverlay.kt`: drag & assign; `PlayOverlay.kt`: overlay control/pratinjau/keyboard focus; `ShizukuBridge.kt`: koneksi/izin; `ShellInputService.kt`: injeksi shell; `MappingStore.kt` + `Models.kt`: profil JSON; `.github/workflows/build.yml`: CI.

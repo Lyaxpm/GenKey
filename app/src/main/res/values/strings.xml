@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="service_label">Gen Keymapper</string>
-    <string name="service_desc">Gen Keymapper memakai layanan ini untuk mengubah tombol keyboard, mouse, dan gamepad menjadi sentuhan di layar. Tanpa layanan ini aplikasi tidak bisa memetakan tombol. Semua gratis, tanpa VIP.</string>
+    <string name="app_name">Gen Keymapper</string>
+    <string name="service_label">Gen Keymapper Overlay</string>
 </resources>

@@ -12,6 +12,10 @@ class MappingStore(ctx: Context) {
 
     val profiles = LinkedHashMap<String, Profile>()
 
+    var activePackage: String
+        get() = prefs.getString("activePackage", "*") ?: "*"
+        set(value) = prefs.edit().putString("activePackage", value).apply()
+
     var useShizuku: Boolean
         get() = prefs.getBoolean("useShizuku", true)
         set(v) = prefs.edit().putBoolean("useShizuku", v).apply()
@@ -102,9 +106,11 @@ class MappingStore(ctx: Context) {
     fun profileFor(pkg: String): Profile? = profiles[pkg] ?: profiles["*"]
 
     fun ensureProfile(pkg: String, name: String): Profile {
-        return profiles.getOrPut(pkg) {
-            Profile(pkg, name).also { save() }
-        }
+        profiles[pkg]?.let { return it }
+        val created = Profile(pkg, name)
+        profiles[pkg] = created
+        save()
+        return created
     }
 
     fun addMmorpgPreset(pkg: String) {

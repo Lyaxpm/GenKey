@@ -9,7 +9,7 @@ import android.view.MotionEvent
 import java.util.concurrent.Executors
 import rikka.shizuku.Shizuku
 
-/** Jembatan IPC Shizuku v13; selalu ada fallback Accessibility jika Shizuku tidak hidup. */
+/** Jembatan IPC Shizuku v13; tanpa Accessibility. */
 object ShizukuBridge {
     private const val REQUEST_CODE = 9911
     @Volatile private var remote: IInputBridge? = null
