@@ -13,7 +13,8 @@ data class KeyMap(
     var y: Float = 0.5f,
     var dx: Float = 0f,      // vektor geser (fraksi layar) untuk "swipe"
     var dy: Float = -0.18f,
-    var dur: Long = 250      // durasi ms untuk "swipe"
+    var dur: Long = 250,     // durasi ms untuk "swipe"
+    var intervalMs: Long = 150 // interval turbo
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id)
@@ -24,6 +25,7 @@ data class KeyMap(
         .put("dx", dx.toDouble())
         .put("dy", dy.toDouble())
         .put("dur", dur)
+        .put("intervalMs", intervalMs)
 
     companion object {
         fun fromJson(o: JSONObject): KeyMap = KeyMap(
@@ -34,13 +36,17 @@ data class KeyMap(
             y = o.optDouble("y", 0.5).toFloat(),
             dx = o.optDouble("dx", 0.0).toFloat(),
             dy = o.optDouble("dy", -0.18).toFloat(),
-            dur = o.optLong("dur", 250)
+            dur = o.optLong("dur", 250).coerceIn(50, 3000),
+            intervalMs = o.optLong("intervalMs", 150).coerceIn(50, 3000)
         )
     }
 
     fun actionLabel(): String = when (action) {
         "hold" -> "Tahan"
         "swipe" -> "Geser"
+        "toggle" -> "Toggle"
+        "repeat" -> "Turbo"
+        "double" -> "Double"
         else -> "Tap"
     }
 }
@@ -51,10 +57,10 @@ data class JoyMap(
     var x: Float = 0.2f,
     var y: Float = 0.75f,
     var radiusDp: Int = 0,
-    var up: Int = -1,
-    var down: Int = -1,
-    var left: Int = -1,
-    var right: Int = -1
+    var up: Int = 51,
+    var down: Int = 47,
+    var left: Int = 29,
+    var right: Int = 32
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id)
@@ -136,12 +142,37 @@ data class Profile(
         fun fromJson(o: JSONObject): Profile {
             val p = Profile(o.optString("pkg", "*"), o.optString("name", "Default"))
             val ka = o.optJSONArray("keys") ?: JSONArray()
+            require(ka.length() <= 300) { "Maksimal 300 tombol per profil" }
             for (i in 0 until ka.length()) p.keys.add(KeyMap.fromJson(ka.getJSONObject(i)))
             val ja = o.optJSONArray("joys") ?: JSONArray()
+            require(ja.length() <= 20) { "Maksimal 20 joystick per profil" }
             for (i in 0 until ja.length()) p.joys.add(JoyMap.fromJson(ja.getJSONObject(i)))
             p.camera = o.optJSONObject("camera")?.let { CameraMap.fromJson(it) }
+            p.validate()
             return p
         }
+    }
+
+    fun validate() {
+        require(pkg == "*" || pkg.matches(Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+"))) { "Package profil tidak valid" }
+        require(pkg.length <= 255 && name.length in 1..120) { "Nama profil tidak valid" }
+        val ids = mutableSetOf<String>()
+        fun position(x: Float, y: Float) { require(x.isFinite() && y.isFinite()) { "Koordinat tidak valid" } }
+        keys.forEach {
+            require(it.id.length in 1..128 && ids.add(it.id)) { "ID kontrol duplikat / tidak valid" }
+            require(it.action in setOf("tap", "hold", "swipe", "toggle", "repeat", "double")) { "Jenis kontrol tidak dikenal" }
+            require(it.keyCode in -1..1000 || it.keyCode in setOf(-1001, -1002)) { "Kode tombol tidak valid" }
+            position(it.x, it.y); position(it.dx, it.dy)
+            it.x = it.x.coerceIn(0f, 1f); it.y = it.y.coerceIn(0f, 1f)
+            it.dx = it.dx.coerceIn(-1f, 1f); it.dy = it.dy.coerceIn(-1f, 1f)
+        }
+        joys.forEach {
+            require(it.id.length in 1..128 && ids.add(it.id)) { "ID joystick duplikat / tidak valid" }
+            position(it.x, it.y); it.x = it.x.coerceIn(0f, 1f); it.y = it.y.coerceIn(0f, 1f)
+            it.radiusDp = it.radiusDp.coerceIn(0, 220)
+            require(listOf(it.up, it.down, it.left, it.right).all { code -> code in -1..1000 }) { "Arah joystick tidak valid" }
+        }
+        camera?.let { position(it.x, it.y); it.x = it.x.coerceIn(0f, 1f); it.y = it.y.coerceIn(0f, 1f) }
     }
 
     fun count(): Int = keys.size + joys.size + if (camera != null) 1 else 0

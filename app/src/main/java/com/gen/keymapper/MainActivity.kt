@@ -26,6 +26,17 @@ import android.widget.Toast
 class MainActivity : Activity() {
     private lateinit var store: MappingStore
     private lateinit var root: LinearLayout
+    private lateinit var scroll: ScrollView
+    private val main = Handler(Looper.getMainLooper())
+    private var statusSignature = ""
+    private var tab = 0
+    private val poll = object : Runnable {
+        override fun run() {
+            val signature = "${ShizukuBridge.isReady()}|${ShizukuBridge.error}|${MapperService.instance?.inputStatus}|${android.view.InputDevice.getDeviceIds().joinToString()}"
+            if (signature != statusSignature) { statusSignature = signature; draw() }
+            main.postDelayed(this, 1000)
+        }
+    }
     private fun dp(n: Int) = (n * resources.displayMetrics.density).toInt()
     private val bg = Color.rgb(10, 14, 29)
     private val surface = Color.rgb(21, 28, 48)
@@ -39,16 +50,30 @@ class MainActivity : Activity() {
         window.navigationBarColor = bg
         store = MappingStore(this)
         ShizukuBridge.initialize(this)
-        val scroll = ScrollView(this).apply { fillViewport = true; isVerticalScrollBarEnabled = false }
+        scroll = ScrollView(this).apply { isFillViewport = true; isVerticalScrollBarEnabled = false }
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(24), dp(18), dp(32))
             setBackgroundColor(bg)
         }
         scroll.addView(root)
+        scroll.setOnApplyWindowInsetsListener { v, insets ->
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                val bars = insets.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
+                v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            } else {
+                @Suppress("DEPRECATION")
+                v.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop, insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
+            }
+            insets
+        }
         setContentView(scroll)
+        scroll.requestApplyInsets()
     }
-    override fun onResume() { super.onResume(); store.load(); draw() }
+    override fun onResume() { super.onResume(); store.load(); draw(); main.post(poll) }
+    override fun onPause() { main.removeCallbacks(poll); super.onPause() }
+    override fun onDestroy() { main.removeCallbacksAndMessages(null); super.onDestroy() }
+    override fun onConfigurationChanged(config: android.content.res.Configuration) { super.onConfigurationChanged(config); draw() }
 
     private fun shape(fill: Int, rad: Int = 18, stroke: Int = Color.TRANSPARENT) =
         GradientDrawable().apply {
@@ -102,20 +127,30 @@ class MainActivity : Activity() {
         }
 
     private fun draw() {
+        val scrollY = scroll.scrollY
         root.removeAllViews()
-        root.addView(text("GEN  /  KEYMAPPER", 12f, cyan, true))
+        val horizontal = maxOf(dp(18), (resources.displayMetrics.widthPixels - dp(760)) / 2)
+        root.setPadding(horizontal, dp(20), horizontal, dp(32))
+        root.addView(bar(text("GENKEY", 16f, cyan, true), text("3.0  /  CONTROL STUDIO", 10f, muted)))
         root.addView(space(8))
-        root.addView(text("Play your way.", 29f, Color.WHITE, true))
+        root.addView(text("Kontrolmu. Permainanmu.", 26f, Color.WHITE, true))
         root.addView(text("Kontrol keyboard & mouse untuk game Android", 13f, muted))
-        root.addView(space(22))
+        root.addView(space(18))
+        root.addView(bar(
+            action("Dashboard", tab == 0) { tab = 0; draw() },
+            action("Persiapan", tab == 1) { tab = 1; draw() },
+            action("Pengaturan", tab == 2) { tab = 2; draw() }))
+        root.addView(space(18))
+        if (store.lastError.isNotBlank()) root.addView(text(store.lastError, 12f, Color.rgb(255, 180, 120)))
 
+        if (tab == 0) {
         val hero = panel().apply { background = gradient() }
         hero.addView(text("CONTROL CENTER", 11f, cyan, true))
         hero.addView(space(7))
         hero.addView(text(if (MapperService.instance == null) "Mapping belum aktif" else "Overlay sedang berjalan",
             21f, Color.WHITE, true))
         hero.addView(space(8))
-        hero.addView(text("Backend Shizuku · tanpa Accessibility · profil game mandiri", 12f, Color.rgb(198, 202, 235)))
+        hero.addView(text(MapperService.instance?.inputStatus ?: "Buat profil, susun kontrol, lalu buka game.", 12f, Color.rgb(198, 202, 235)))
         hero.addView(space(15))
         val chips = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         chips.addView(status("Shizuku", ShizukuBridge.isReady()))
@@ -129,7 +164,16 @@ class MainActivity : Activity() {
         ))
         root.addView(hero)
         root.addView(space(18))
+        val devices = android.view.InputDevice.getDeviceIds().mapNotNull { android.view.InputDevice.getDevice(it) }
+            .filter { !it.isVirtual && (it.supportsSource(android.view.InputDevice.SOURCE_KEYBOARD) || it.supportsSource(android.view.InputDevice.SOURCE_MOUSE) || it.supportsSource(android.view.InputDevice.SOURCE_GAMEPAD)) }
+        val deviceCard = panel()
+        deviceCard.addView(text("PERANGKAT INPUT", 11f, cyan, true))
+        deviceCard.addView(space(8))
+        deviceCard.addView(text(if (devices.isEmpty()) "Belum ada keyboard, mouse, atau gamepad terdeteksi." else devices.joinToString("\n") { it.name }, 13f, muted))
+        root.addView(deviceCard); root.addView(space(18))
+        }
 
+        if (tab == 1) {
         root.addView(sectionTitle("Persiapan", "Dua izin saja, bukan layanan Accessibility"))
         root.addView(space(10))
         val setup = panel()
@@ -138,7 +182,7 @@ class MainActivity : Activity() {
             !ShizukuBridge.isRunning() -> "Belum berjalan — nyalakan Shizuku melalui Wireless debugging."
             !ShizukuBridge.hasPermission() -> "Shizuku ditemukan — berikan akses untuk mengirim gesture."
             !ShizukuBridge.isReady() -> "Izin sudah ada — UserService sedang menghubungkan backend."
-            else -> "Terhubung — input sintetis tersedia."
+            else -> "Backend siap. Jalankan Uji input untuk memeriksa penerimaan sentuhan."
         }
         setup.addView(space(5)); setup.addView(text(reason, 12f, muted))
         setup.addView(space(10)); setup.addView(action("Hubungkan Shizuku") {
@@ -146,7 +190,7 @@ class MainActivity : Activity() {
                 packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")?.let { startActivity(it) }
                     ?: toast("Pasang dan mulai aplikasi Shizuku dahulu")
             } else ShizukuBridge.requestPermission()
-            Handler(Looper.getMainLooper()).postDelayed({ draw() }, 1300)
+            main.postDelayed({ draw() }, 1300)
         })
         setup.addView(space(15))
         setup.addView(text("02   OVERLAY", 12f, cyan, true))
@@ -156,9 +200,25 @@ class MainActivity : Activity() {
             if (!Settings.canDrawOverlays(this)) startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                 Uri.parse("package:$packageName")))
         })
+        if (ShizukuBridge.error.isNotBlank()) { setup.addView(space(10)); setup.addView(text(ShizukuBridge.error, 12f, Color.rgb(255, 185, 114))) }
+        setup.addView(space(16))
+        setup.addView(action("Uji tap & multitouch", true) { startActivity(Intent(this, InputTestActivity::class.java)) })
+        setup.addView(space(8))
+        setup.addView(text("Uji ini memastikan event masuk ke layar tes. Kompatibilitas setiap game tetap perlu dicoba.", 12f, muted))
+        if (android.os.Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            setup.addView(space(12)); setup.addView(action("Izinkan notifikasi sesi") {
+                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 601)
+            })
+        }
         root.addView(setup)
-        root.addView(space(22))
+        root.addView(space(18))
+        val guide = panel()
+        guide.addView(text("ALUR BERMAIN", 11f, cyan, true)); guide.addView(space(8))
+        guide.addView(text("1. Hubungkan Shizuku + izinkan overlay.\n2. Tambah game, pilih preset, geser kontrol.\n3. Mainkan, ketuk GEN → Fokus keyboard.\n4. F8 menangkap mouse; Esc melepas.\n5. F9 untuk jeda. Volume tetap berfungsi.", 13f, muted))
+        root.addView(guide)
+        }
 
+        if (tab == 0) {
         val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         val heading = sectionTitle("Game & Profil", "Pilih satu game untuk sesi mapping").apply {
             layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
@@ -185,26 +245,34 @@ class MainActivity : Activity() {
                 action(if (active) "✎  Edit mapping" else "▶  Pilih & edit", true) {
                     selectGame(p.pkg)
                     if (p.pkg == "*") startMapper(true) else {
-                        startMapper(false)
-                        launchGame(p.pkg)
-                        Handler(Looper.getMainLooper()).postDelayed({
-                            MapperService.instance?.openEditor()
-                        }, 900)
+                        if (startMapper(false)) launchGame(p.pkg, true)
                     }
                 },
-                action("🎮  Mainkan") { selectGame(p.pkg); launchGame(p.pkg) }
+                action("Mainkan") { selectGame(p.pkg); launchGame(p.pkg) }
             ))
             card.addView(space(8))
             card.addView(bar(
-                action("Preset MMORPG") {
-                    store.addMmorpgPreset(p.pkg); MapperService.instance?.store?.load(); draw()
+                action("Tambah preset") {
+                    AlertDialog.Builder(this).setTitle("Tambahkan preset")
+                        .setItems(arrayOf("MMORPG · WASD + skill", "FPS · WASD + M1 tembak + M2 bidik")) { _, preset ->
+                            MapperService.instance?.resetInputs()
+                            if (preset == 0) store.addMmorpgPreset(p.pkg) else store.addFpsPreset(p.pkg)
+                            MapperService.instance?.reloadProfiles(); checkSave(); draw()
+                        }.show()
                 },
                 action("Opsi") {
                     AlertDialog.Builder(this).setTitle(p.name)
-                        .setItems(arrayOf("Gunakan profil", "Hapus profil")) { _, idx ->
+                        .setItems(arrayOf("Gunakan profil", "Ubah nama", "Hapus profil")) { _, idx ->
                             if (idx == 0) selectGame(p.pkg)
-                            else AlertDialog.Builder(this).setTitle("Hapus profil ${p.name}?")
-                                .setPositiveButton("Hapus") { _, _ -> store.deleteProfile(p.pkg); draw() }
+                            else if (idx == 1) {
+                                val input = EditText(this).apply { setText(p.name); maxLines = 1 }
+                                AlertDialog.Builder(this).setTitle("Nama profil").setView(input)
+                                    .setPositiveButton("Simpan") { _, _ ->
+                                        val name = input.text.toString().trim().take(120)
+                                        if (name.isNotBlank()) { p.name = name; store.save(); MapperService.instance?.reloadProfiles(); checkSave(); draw() }
+                                    }.setNegativeButton("Batal", null).show()
+                            } else AlertDialog.Builder(this).setTitle("Hapus profil ${p.name}?")
+                                .setPositiveButton("Hapus") { _, _ -> MapperService.instance?.resetInputs(); store.deleteProfile(p.pkg); MapperService.instance?.selectProfile(store.activePackage); checkSave(); draw() }
                                 .setNegativeButton("Batal", null).show()
                         }.show()
                 }
@@ -212,8 +280,10 @@ class MainActivity : Activity() {
             root.addView(card); root.addView(space(10))
         }
         root.addView(space(10))
+        }
 
-        root.addView(sectionTitle("Pengaturan", "Personalasi kontrol dan pencadangan"))
+        if (tab == 2) {
+        root.addView(sectionTitle("Pengaturan", "Sesuaikan kontrol dan simpan cadangan"))
         root.addView(space(10))
         val settings = panel()
         settings.addView(text("Tap ${store.tapMs} ms     •     Joystick ${store.joyRadiusDp} dp", 12f, muted))
@@ -227,63 +297,98 @@ class MainActivity : Activity() {
             }))
         settings.addView(space(8))
         settings.addView(bar(action("Ekspor JSON") { exportProfiles() }, action("Impor JSON") { importProfiles() }))
+        settings.addView(space(12))
+        settings.addView(action(if (store.gamepadEnabled) "Analog gamepad: AKTIF" else "Analog gamepad: NONAKTIF") {
+            MapperService.instance?.resetInputs(); store.gamepadEnabled = !store.gamepadEnabled; draw()
+        })
+        settings.addView(space(8))
+        settings.addView(action(if (store.invertY) "Balik sumbu Y: AKTIF" else "Balik sumbu Y: NONAKTIF") { store.invertY = !store.invertY; draw() })
+        settings.addView(space(12))
+        settings.addView(text("Analog kiri menggerakkan joystick pertama dalam profil. Tombol gamepad dapat direkam di editor. F8/F9/Esc disediakan untuk kontrol sesi.", 12f, muted))
+        settings.addView(space(16)); settings.addView(text("DIAGNOSTIK", 11f, cyan, true))
+        settings.addView(space(8)); settings.addView(text(ShizukuBridge.diagnostics, 12f, muted))
+        settings.addView(space(8)); settings.addView(action("Segarkan diagnostik") { ShizukuBridge.heartbeat(); main.postDelayed({ draw() }, 300) })
         root.addView(settings)
+        }
         root.addView(space(18))
-        root.addView(text("GenKeymapper 2.1  ·  Semua fitur lokal, tanpa VIP", 11f, muted))
+        root.addView(text("GenKey 3.0  ·  Lokal, tanpa akun atau langganan", 11f, muted))
         root.addView(space(5))
-        root.addView(text("Input game tertentu mungkin membatasi overlay atau sintesis sentuhan. Gunakan pada game yang mengizinkan keymapping.", 11f, muted))
+        root.addView(text("Kompatibilitas input bergantung pada perangkat, firmware, dan game.", 11f, muted))
+        scroll.post { scroll.scrollTo(0, scrollY) }
     }
 
+    private fun checkSave() { if (store.lastError.isNotBlank()) toast(store.lastError) }
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     private fun selectGame(pkg: String) {
         store.activePackage = pkg
         MapperService.instance?.selectProfile(pkg)
         draw()
     }
-    private fun startMapper(edit: Boolean) {
+    private fun startMapper(edit: Boolean): Boolean {
         if (!Settings.canDrawOverlays(this)) {
             toast("Aktifkan izin overlay terlebih dahulu")
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
-            return
+            return false
         }
+        if (!edit && !ShizukuBridge.isReady()) { tab = 1; draw(); toast("Hubungkan Shizuku dahulu"); return false }
+        store.mappingEnabled = true
         val svc = Intent(this, MapperService::class.java).apply {
             putExtra(MapperService.EXTRA_PACKAGE, store.activePackage)
             if (edit) action = MapperService.ACTION_EDIT
         }
         try {
             startForegroundService(svc)
-            if (edit) Handler(Looper.getMainLooper()).postDelayed({
-                MapperService.instance?.selectProfile(store.activePackage)
-                MapperService.instance?.openEditor()
-            }, 180)
             toast(if (edit) "Editor overlay dibuka" else "Overlay dijalankan")
-            draw()
-        } catch (e: Exception) { toast("Tidak dapat memulai layanan: ${e.message}") }
+            main.postDelayed({ draw() }, 200)
+            return true
+        } catch (e: Exception) { toast("Tidak dapat memulai layanan: ${e.message}"); return false }
     }
     private fun stopMapper() {
         MapperService.instance?.stopSelf()
-        draw()
+        main.postDelayed({ draw() }, 200)
     }
-    private fun launchGame(pkg: String) {
-        if (pkg == "*") { toast("Pilih profil game yang ingin dibuka"); return }
-        if (MapperService.instance == null) startMapper(false)
+    private fun launchGame(pkg: String, edit: Boolean = false) {
+        if (pkg == "*") { startMapper(edit); return }
         val launch = packageManager.getLaunchIntentForPackage(pkg)
         if (launch == null) { toast("Game tidak ditemukan / tidak bisa dibuka"); return }
-        Handler(Looper.getMainLooper()).postDelayed({ startActivity(launch) }, 250)
+        if (!startMapper(false)) return
+        main.postDelayed({
+            runCatching { startActivity(launch) }.onFailure { toast("Game gagal dibuka: ${it.message}") }
+            if (edit) main.postDelayed({ MapperService.instance?.openEditor() }, 1000)
+        }, 250)
     }
     private fun pickApp() {
         val pm = packageManager
-        val installed = pm.getInstalledApplications(0)
-            .filter { it.packageName != packageName && pm.getLaunchIntentForPackage(it.packageName) != null }
-            .sortedBy { pm.getApplicationLabel(it).toString().lowercase() }
-        val labels = installed.map { pm.getApplicationLabel(it).toString() }.toTypedArray()
-        if (labels.isEmpty()) { toast("Aplikasi belum terdeteksi"); return }
-        AlertDialog.Builder(this).setTitle("Tambahkan game")
-            .setItems(labels) { _, index ->
-                val item = installed[index]; val name = labels[index]
-                store.ensureProfile(item.packageName, name)
-                selectGame(item.packageName)
-            }.setNegativeButton("Batal", null).show()
+        val installed = pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
+            .map { it.activityInfo.applicationInfo }.distinctBy { it.packageName }
+            .filter { it.packageName != packageName }.sortedBy { pm.getApplicationLabel(it).toString().lowercase() }
+        val search = EditText(this).apply { hint = "Cari nama game atau package"; setSingleLine() }
+        val list = android.widget.ListView(this)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(16), 0, dp(16), 0)
+            addView(search); addView(list, LinearLayout.LayoutParams(-1, dp(340)))
+        }
+        var filtered = installed
+        fun update(query: String) {
+            filtered = installed.filter { pm.getApplicationLabel(it).toString().contains(query, true) || it.packageName.contains(query, true) }
+            list.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_list_item_1,
+                filtered.map { pm.getApplicationLabel(it).toString() + "\n" + it.packageName })
+        }
+        update("")
+        val dialog = AlertDialog.Builder(this).setTitle("Tambah game").setView(box)
+            .setNeutralButton("Profil umum") { _, _ -> store.ensureProfile("*", "Profil umum"); selectGame("*") }
+            .setNegativeButton("Batal", null).create()
+        list.setOnItemClickListener { _, _, i, _ ->
+            val app = filtered[i]
+            store.ensureProfile(app.packageName, pm.getApplicationLabel(app).toString().take(120))
+            checkSave(); selectGame(app.packageName); dialog.dismiss()
+        }
+        search.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { update(s?.toString().orEmpty()) }
+            override fun afterTextChanged(s: android.text.Editable?) = Unit
+        })
+        dialog.show()
     }
 
     // ---------- backup profil ----------
@@ -311,11 +416,26 @@ class MainActivity : Activity() {
         val uri = data?.data ?: return
         try {
             when (requestCode) {
-                502 -> contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(store.toJsonText()) }
+                502 -> (contentResolver.openOutputStream(uri) ?: error("File tidak dapat ditulis")).bufferedWriter().use { it.write(store.toJsonText()) }
                 503 -> {
-                    val json = contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: return
-                    store.importJsonText(json)
-                    MapperService.instance?.store?.load()
+                    val json = contentResolver.openInputStream(uri)?.bufferedReader()?.use { reader ->
+                        val out = StringBuilder(); val buffer = CharArray(8192)
+                        while (true) {
+                            val count = reader.read(buffer); if (count < 0) break
+                            require(out.length + count <= 2_000_000) { "Backup maksimal 2 MB" }
+                            out.append(buffer, 0, count)
+                        }; out.toString()
+                    } ?: error("File tidak dapat dibaca")
+                    val count = ProfileCodec.decode(json).size
+                    AlertDialog.Builder(this).setTitle("Impor $count profil?")
+                        .setMessage("Cadangan ini akan mengganti seluruh profil yang sekarang tersimpan.")
+                        .setPositiveButton("Impor") { _, _ ->
+                            runCatching {
+                                MapperService.instance?.resetInputs(); store.importJsonText(json)
+                                MapperService.instance?.selectProfile(store.activePackage); draw()
+                            }.onFailure { toast("Impor gagal: ${it.message}") }
+                        }.setNegativeButton("Batal", null).show()
+                    return
                 }
             }
             draw()
@@ -344,17 +464,19 @@ class MainActivity : Activity() {
             }
         }
         val fTap = field("Durasi tap (ms, 20–500)", store.tapMs.toString())
-        val fHold = field("Durasi tahan (ms, 200–5000)", store.holdMs.toString())
+
         val fJoy = field("Radius joystick (dp, 60–220)", store.joyRadiusDp.toString())
         val fSensitivity = field("Sensitivitas kamera (persen: 50–600)", (store.mouseSensitivity * 100).toInt().toString())
+        val fDead = field("Dead zone gamepad (persen 5–50)", (store.deadZone * 100).toInt().toString())
         AlertDialog.Builder(this)
-            .setTitle("Pengaturan")
-            .setView(layout)
+            .setTitle("Pengaturan input")
+            .setView(ScrollView(this).apply { addView(layout) })
             .setPositiveButton("Simpan") { _, _ ->
                 fTap.text.toString().toLongOrNull()?.let { store.tapMs = it }
-                fHold.text.toString().toLongOrNull()?.let { store.holdMs = it }
                 fJoy.text.toString().toIntOrNull()?.let { store.joyRadiusDp = it }
                 fSensitivity.text.toString().toIntOrNull()?.let { store.mouseSensitivity = it / 100f }
+                fDead.text.toString().toIntOrNull()?.let { store.deadZone = it / 100f }
+                MapperService.instance?.resetInputs()
                 draw()
                 Toast.makeText(this, "Pengaturan tersimpan ✓", Toast.LENGTH_SHORT).show()
             }

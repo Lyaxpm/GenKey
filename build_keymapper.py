@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
-"""Builder portable. Gunakan GitHub Actions apabila tidak ada Android SDK / Gradle lokal."""
+"""Build with the repository's pinned Gradle wrapper (JDK 17 + Android SDK 35)."""
 import os
-import shutil
 import subprocess
-import sys
+from pathlib import Path
 
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
-gradle = shutil.which('gradle')
-if gradle is None:
-    print('Gradle tidak ditemukan. Push source ke GitHub dan jalankan Actions > Build GenKeymapper Android APK > Run workflow.')
-    sys.exit(2)
-print('Building Android APK with Gradle...')
-sys.exit(subprocess.call([gradle, '--no-daemon', ':app:assembleDebug']))
+root = Path(__file__).resolve().parent
+wrapper = root / ("gradlew.bat" if os.name == "nt" else "gradlew")
+raise SystemExit(subprocess.call([str(wrapper), "--no-daemon", ":app:testDebugUnitTest", ":app:lintDebug", ":app:assembleDebug"], cwd=root))

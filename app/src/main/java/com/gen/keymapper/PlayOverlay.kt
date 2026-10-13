@@ -1,384 +1,205 @@
 package com.gen.keymapper
 
 import android.content.Context
-import android.graphics.Color
-import android.graphics.PixelFormat
+import android.graphics.*
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
-import android.os.Build
 import android.provider.Settings
-import android.view.Gravity
-import android.view.KeyEvent
-import android.view.MotionEvent
-import android.view.View
-import android.view.WindowManager
-import android.widget.Button
-import android.widget.FrameLayout
-import android.widget.LinearLayout
-import android.widget.TextView
-import android.widget.Toast
+import android.view.*
+import android.widget.*
 
-/**
- * Overlay mode main:
- * - Tombol kontrol melayang (draggable): buka menu (Mode Mouse / Edit / on-off mapping)
- * - Jendela Mode Mouse (fullscreen, hanya saat aktif): meneruskan sentuhan & hover mouse ke game
- */
+/** A zero-opacity keyboard window captures relative mouse input. No fullscreen mouse interceptor. */
 class PlayOverlay(private val svc: MapperService) {
-
-    private val wm = svc.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-    private val overlayType =
-        if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        else WindowManager.LayoutParams.TYPE_PHONE
-
-    var aimMode = false
-        private set
-    var lookMode = false
-        private set
-
-    private var keySink: View? = null
-    private var ctrlView: View? = null
-    private var ctrlParams: WindowManager.LayoutParams? = null
-    private var aimView: AimPadView? = null
-    private var aimParams: WindowManager.LayoutParams? = null
-    private val mainHandler = Handler(Looper.getMainLooper())
-    private val restoreMouse = Runnable {
-        val view = aimView ?: return@Runnable
-        val lp = aimParams ?: return@Runnable
-        lp.flags = lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
-        try { wm.updateViewLayout(view, lp) } catch (_: Exception) {}
+    private val wm = svc.getSystemService(WindowManager::class.java)
+    private val main = Handler(Looper.getMainLooper())
+    private val type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+    private var sink: InputSink? = null
+    private var control: TextView? = null
+    private var controlParams: WindowManager.LayoutParams? = null
+    private var popup: View? = null
+    private var previews: View? = null
+    private var captureRequested = false
+    var aimMode = false; private set
+    private fun dp(n: Int) = (n * svc.resources.displayMetrics.density).toInt()
+    private fun round(fill: String, radius: Int = 18) = GradientDrawable().apply {
+        setColor(Color.parseColor(fill)); cornerRadius = dp(radius).toFloat()
+        setStroke(dp(1), Color.parseColor("#7064A8"))
     }
-    private var popupView: View? = null
-    private val previewViews = mutableListOf<View>()
-
-    private fun pillBg(color: Int): GradientDrawable = GradientDrawable().apply {
-        shape = GradientDrawable.OVAL
-        setColor(color)
-        setStroke(dp(2), Color.parseColor("#A6A0FF"))
-    }
-
-    private fun dp(v: Int): Int = (v * svc.resources.displayMetrics.density).toInt()
-
-    // ---------- tombol kontrol ----------
-
     fun show() {
-        if (ctrlView != null || !Settings.canDrawOverlays(svc)) return
-        val btn = Button(svc).apply {
-            text = "GEN"
-            textSize = 13f
-            background = pillBg(Color.parseColor("#E53D386F"))
-            setTextColor(Color.WHITE)
-            val s = dp(56)
-            layoutParams = FrameLayout.LayoutParams(s, s)
+        if (control != null || !Settings.canDrawOverlays(svc)) return
+        val button = TextView(svc).apply {
+            text = "GEN"; textSize = 13f; gravity = Gravity.CENTER
+            setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD
+            background = round("#29253F", 20)
+            contentDescription = "Buka kontrol GenKey, geser untuk memindahkan"
         }
-        val params = WindowManager.LayoutParams(
-            dp(56), dp(56), overlayType,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = dp(12); y = dp(160)
-        }
-        var downX = 0f; var downY = 0f; var startX = 0; var startY = 0; var moved = false
-        btn.setOnTouchListener { _, e ->
-            when (e.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    downX = e.rawX; downY = e.rawY
-                    startX = params.x; startY = params.y; moved = false
-                }
+        val lp = WindowManager.LayoutParams(dp(52), dp(52), type,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or ScreenSpace.edgeFlags(), PixelFormat.TRANSLUCENT)
+        ScreenSpace.configure(lp)
+        lp.x = svc.store.bubbleX; lp.y = svc.store.bubbleY
+        val (width, height) = ScreenSpace.size(svc)
+        lp.x = lp.x.coerceIn(0, (width - dp(52)).coerceAtLeast(0))
+        lp.y = lp.y.coerceIn(dp(28), (height - dp(80)).coerceAtLeast(dp(28)))
+        var ox = 0; var oy = 0; var x = 0f; var y = 0f; var moved = false
+        button.setOnTouchListener { _, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { x = e.rawX; y = e.rawY; ox = lp.x; oy = lp.y; moved = false }
                 MotionEvent.ACTION_MOVE -> {
-                    val dx = e.rawX - downX; val dy = e.rawY - downY
-                    if (kotlin.math.abs(dx) > dp(8) || kotlin.math.abs(dy) > dp(8)) moved = true
+                    if (kotlin.math.abs(e.rawX - x) + kotlin.math.abs(e.rawY - y) > dp(8)) moved = true
                     if (moved) {
-                        params.x = startX + dx.toInt(); params.y = startY + dy.toInt()
-                        try { wm.updateViewLayout(btn, params) } catch (_: Exception) {}
+                        lp.x = (ox + e.rawX - x).toInt().coerceIn(0, (width - dp(52)).coerceAtLeast(0))
+                        lp.y = (oy + e.rawY - y).toInt().coerceIn(0, (height - dp(52)).coerceAtLeast(0))
+                        runCatching { wm.updateViewLayout(button, lp) }
                     }
                 }
-                MotionEvent.ACTION_UP -> if (!moved) showPopup()
-            }
-            true
+                MotionEvent.ACTION_UP -> if (moved) { svc.store.bubbleX = lp.x; svc.store.bubbleY = lp.y } else showPopup()
+            }; true
         }
-        ctrlView = btn; ctrlParams = params
-        try { wm.addView(btn, params) } catch (_: Exception) { ctrlView = null }
-        showKeySink()
-        refreshPreviews()
+        try { wm.addView(button, lp); control = button; controlParams = lp; focusKeyboard() }
+        catch (e: Exception) { toast("Overlay gagal: ${e.message}"); svc.stopSelf() }
     }
-
     fun hide() {
-        dismissPopup()
-        clearPreviews()
-        setAimMode(false)
-        lookMode = false
-        ctrlView?.let { try { wm.removeView(it) } catch (_: Exception) {} }
-        ctrlView = null; ctrlParams = null
-        keySink?.let { try { wm.removeView(it) } catch (_: Exception) {} }
-        keySink = null
+        main.removeCallbacksAndMessages(null)
+        setAimMode(false); dismissPopup(); remove(previews); previews = null
+        remove(sink); sink = null; remove(control); control = null
     }
-
-    /**
-     * Jendela fokus kecil untuk keyboard fisik tanpa Accessibility. Android dapat
-     * memindahkan fokus ketika game disentuh; ketuk tombol GEN untuk merebutnya lagi.
-     * Ini bukan raw global input monitoring dan tidak menjamin seluruh perangkat.
-     */
-    private fun showKeySink() {
-        if (keySink != null) return
-        val sink = object : View(svc) {
-            override fun dispatchKeyEvent(event: KeyEvent): Boolean =
-                svc.handleKeyEvent(event) || super.dispatchKeyEvent(event)
-        }.apply { isFocusable = true; isFocusableInTouchMode = true }
-        val lp = WindowManager.LayoutParams(dp(2), dp(2), overlayType,
-            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM,
-            PixelFormat.TRANSLUCENT).apply {
-                gravity = Gravity.TOP or Gravity.START
-                x = 0; y = 0
-        }
-        try { wm.addView(sink, lp); keySink = sink; sink.requestFocus() }
-        catch (_: Exception) { keySink = null }
+    private fun remove(view: View?) { if (view != null) runCatching { wm.removeView(view) } }
+    private fun toast(message: String) = Toast.makeText(svc, message, Toast.LENGTH_LONG).show()
+    fun focusKeyboard() {
+        setAimMode(false); remove(sink)
+        val view = InputSink(svc)
+        val lp = WindowManager.LayoutParams(1, 1, type,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM or ScreenSpace.edgeFlags(), PixelFormat.TRANSLUCENT)
+        ScreenSpace.configure(lp)
+        // Fully transparent SAW windows are exempt from Android 12+ untrusted touch blocking.
+        lp.alpha = 0f
+        try { wm.addView(view, lp); sink = view; view.requestFocus() }
+        catch (e: Exception) { sink = null; svc.inputStatus = "Fokus gagal: ${e.message}" }
     }
-    private fun requestKeyboardFocus() { keySink?.requestFocus() }
-
-    // ---------- popup menu ----------
-
-    private fun showPopup() {
-        dismissPopup()
-        val layout = LinearLayout(svc).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(15), dp(12), dp(12))
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#F2162036"))
-                cornerRadius = dp(20).toFloat()
-                setStroke(dp(1), Color.parseColor("#5C628B"))
-            }
-        }
-        layout.addView(TextView(svc).apply {
-            text = "GEN  /  QUICK MENU"; textSize = 11f
-            setTextColor(Color.parseColor("#72E6E2"))
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-        })
-        layout.addView(TextView(svc).apply {
-            text = svc.store.appLabel(svc.currentPkg)
-            textSize = 15f; setTextColor(Color.WHITE)
-            setPadding(0, dp(5), 0, dp(11))
-        })
-        fun addBtn(label: String, primary: Boolean = false, onClick: () -> Unit) {
-            layout.addView(TextView(svc).apply {
-                text = label
-                textSize = 12f; gravity = Gravity.CENTER_VERTICAL
-                setTextColor(Color.WHITE)
-                setPadding(dp(13), dp(10), dp(10), dp(10))
-                background = GradientDrawable().apply {
-                    setColor(Color.parseColor(if (primary) "#7064D9" else "#303B5D"))
-                    cornerRadius = dp(11).toFloat()
-                }
-                setOnClickListener { dismissPopup(); onClick() }
-            }, LinearLayout.LayoutParams(-1, dp(43)).apply { bottomMargin = dp(6) })
-        }
-        addBtn("✎   Buka editor mapping", true) { svc.openEditor() }
-        addBtn("⌨   Fokus ulang keyboard") { requestKeyboardFocus() }
-        addBtn(if (svc.store.mappingEnabled) "Ⅱ   Nonaktifkan mapping" else "▷   Aktifkan mapping") {
-            svc.store.mappingEnabled = !svc.store.mappingEnabled
-            svc.resetInputs(); refreshPreviews()
-        }
-        addBtn(if (svc.store.showChips) "◉   Sembunyikan indikator" else "◎   Tampilkan indikator") {
-            svc.store.showChips = !svc.store.showChips; refreshPreviews()
-        }
-        addBtn(if (aimMode) "◌   Tutup mouse beta" else "◌   Mouse beta (eksperimental)") {
-            if (!svc.store.mappingEnabled) return@addBtn
-            if (!aimMode && !ShizukuBridge.isReady()) {
-                Toast.makeText(svc, "Jalankan Shizuku untuk mode mouse", Toast.LENGTH_SHORT).show()
-            } else setAimMode(!aimMode)
-        }
-        addBtn(if (lookMode) "⌖   Kamera: aktif" else "⌖   Kamera: nonaktif") {
-            lookMode = !lookMode
-            if (lookMode && !aimMode) setAimMode(true)
-            Toast.makeText(svc, "Mouse-look bersifat eksperimental", Toast.LENGTH_SHORT).show()
-        }
-        addBtn("⇄   Ganti profil berikutnya") {
-            val games = svc.store.profiles.keys.toList()
-            if (games.isNotEmpty()) {
-                val index = games.indexOf(svc.currentPkg)
-                svc.selectProfile(games[(index + 1) % games.size])
-                Toast.makeText(svc, "Profil: ${svc.store.appLabel(svc.currentPkg)}", Toast.LENGTH_SHORT).show()
-            }
-        }
-        addBtn("✕   Tutup overlay") { svc.stopSelf() }
-        val params = WindowManager.LayoutParams(dp(246), -2, overlayType,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT).apply {
-            gravity = Gravity.TOP or Gravity.START
-            val cp = ctrlParams
-            x = ((cp?.x ?: dp(12)) + dp(62)).coerceAtMost(
-                (svc.resources.displayMetrics.widthPixels - dp(254)).coerceAtLeast(0))
-            y = (cp?.y ?: dp(160)).coerceAtMost(
-                (svc.resources.displayMetrics.heightPixels - dp(360)).coerceAtLeast(0))
-        }
-        try { wm.addView(layout, params); popupView = layout }
-        catch (_: Exception) { popupView = null }
-    }
-
-    private fun dismissPopup() {
-        popupView?.let { try { wm.removeView(it) } catch (_: Exception) {} }
-        popupView = null
-        requestKeyboardFocus()
-    }
-
-    // ---------- penanda mapping saat bermain (tidak menangkap sentuhan) ----------
-
-    private fun clearPreviews() {
-        previewViews.forEach { try { wm.removeView(it) } catch (_: Exception) {} }
-        previewViews.clear()
-    }
-
-    fun refreshPreviews() {
-        clearPreviews()
-        if (!svc.store.showChips || !svc.store.mappingEnabled || !Settings.canDrawOverlays(svc) || svc.editorOpen) return
-        if (svc.currentPkg == svc.packageName) return
-        val profile = svc.store.profileFor(svc.currentPkg) ?: return
-        val dm = svc.resources.displayMetrics
-        fun showPoint(x: Float, y: Float, label: String, joy: Boolean) {
-            val size = dp(if (joy) 67 else 43)
-            val chip = TextView(svc).apply {
-                text = label
-                gravity = Gravity.CENTER
-                textSize = if (joy) 10f else 11f
-                setTextColor(Color.WHITE)
-                background = GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
-                    setColor(Color.parseColor(if (joy) "#6434A88F" else "#665D5EC6"))
-                    setStroke(dp(1), Color.WHITE)
-                }
-            }
-            val lp = WindowManager.LayoutParams(size, size, overlayType,
-                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-                PixelFormat.TRANSLUCENT).apply {
-                gravity = Gravity.TOP or Gravity.START
-                this.x = (x * dm.widthPixels - size / 2).toInt().coerceAtLeast(0)
-                this.y = (y * dm.heightPixels - size / 2).toInt().coerceAtLeast(0)
-                alpha = 0.65f
-            }
-            try { wm.addView(chip, lp); previewViews.add(chip) } catch (_: Throwable) {}
-        }
-        profile.keys.forEach { showPoint(it.x, it.y, KeyNames.label(it.keyCode), false) }
-        profile.joys.forEach { showPoint(it.x, it.y, "WASD", true) }
-        profile.camera?.let { showPoint(it.x, it.y, "CAM", true) }
-    }
-
-    // ---------- Mode Mouse ----------
-
     fun setAimMode(on: Boolean) {
-        if (on == aimMode) return
-        aimMode = on
-        if (!on) lookMode = false
-        if (on) {
-            if (!Settings.canDrawOverlays(svc)) { aimMode = false; return }
-            val v = AimPadView(svc)
-            val params = WindowManager.LayoutParams(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT,
-                overlayType,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-                PixelFormat.TRANSLUCENT
-            )
-            aimView = v
-            aimParams = params
-            try {
-                wm.addView(v, params)
-                // pastikan tombol kontrol tetap di atas
-                ctrlView?.let { cv ->
-                    try { wm.removeView(cv) } catch (_: Exception) {}
-                    ctrlParams?.let { wm.addView(cv, it) }
-                }
-            } catch (_: Exception) { aimMode = false; aimView = null; aimParams = null }
-        } else {
-            mainHandler.removeCallbacks(restoreMouse)
-            aimView?.let { try { wm.removeView(it) } catch (_: Exception) {} }
-            aimView = null
-            aimParams = null
+        if (!on) {
+            captureRequested = false; aimMode = false; sink?.releasePointerCapture(); svc.resetInputs()
+            control?.text = "GEN"
+            return
         }
-    }
-
-    /** Sementara biarkan event sintetis Shizuku jatuh ke game, bukan ke overlay. */
-    fun passthroughFor(ms: Long) {
-        val v = aimView ?: return
-        val lp = aimParams ?: return
-        mainHandler.removeCallbacks(restoreMouse)
-        lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-        try { wm.updateViewLayout(v, lp) } catch (_: Exception) {}
-        mainHandler.postDelayed(restoreMouse, ms.coerceIn(120, 600))
-    }
-
-    /** Lapisan fullscreen Mode Mouse: teruskan semua sentuhan ke game via gesture. */
-    private inner class AimPadView(ctx: Context) : View(ctx) {
-        private var capturedMouseKey = -1
-        private var lastX = Float.NaN
-        private var lastY = Float.NaN
-        private var dxSum = 0f
-        private var dySum = 0f
-        private var lastMoveAt = 0L
-        init { isFocusable = false }
-
-        override fun onHoverEvent(e: MotionEvent): Boolean {
-            if (e.action == MotionEvent.ACTION_HOVER_EXIT) {
-                lastX = Float.NaN; lastY = Float.NaN
-                dxSum = 0f; dySum = 0f
-                return true
+        if (!ShizukuBridge.isReady() || !svc.store.mappingEnabled) { toast("Aktifkan Shizuku dan mapping dahulu"); return }
+        if (svc.store.profileFor(svc.currentPkg)?.camera == null) { toast("Tambahkan kontrol Kamera di editor dahulu"); return }
+        if (sink?.hasWindowFocus() != true) focusKeyboard()
+        captureRequested = true
+        sink?.post { if (captureRequested) sink?.requestPointerCapture() }
+        main.postDelayed({
+            if (captureRequested && !aimMode) {
+                captureRequested = false
+                svc.inputStatus = "Mouse capture tidak diberikan oleh Android"
+                toast("Mouse capture belum aktif. Hubungkan mouse fisik lalu pilih Fokus keyboard. F8 untuk mencoba lagi.")
             }
-            if (e.action == MotionEvent.ACTION_HOVER_MOVE) {
-                svc.aimCursorX = e.x; svc.aimCursorY = e.y
-                if (lookMode && !lastX.isNaN()) {
-                    dxSum += e.x - lastX
-                    dySum += e.y - lastY
-                    val now = android.os.SystemClock.uptimeMillis()
-                    if (now - lastMoveAt >= 48 && (kotlin.math.abs(dxSum) + kotlin.math.abs(dySum)) >= 2f) {
-                        svc.cameraMove(dxSum, dySum)
-                        dxSum = 0f; dySum = 0f; lastMoveAt = now
-                    }
-                }
-                lastX = e.x; lastY = e.y
-            }
-            return true
+        }, 1200)
+    }
+    private inner class InputSink(context: Context) : View(context) {
+        private var mouseButtons = 0
+        init { isFocusable = true; isFocusableInTouchMode = true }
+        override fun dispatchKeyEvent(event: KeyEvent) = svc.handleKeyEvent(event) || super.dispatchKeyEvent(event)
+        override fun onGenericMotionEvent(event: MotionEvent) = svc.gamepad(event) || super.onGenericMotionEvent(event)
+        override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+            super.onWindowFocusChanged(hasWindowFocus)
+            svc.inputStatus = if (hasWindowFocus) "Keyboard siap · F8 mouse · F9 jeda" else "Fokus lepas · ketuk GEN → Fokus keyboard"
+            if (!hasWindowFocus) { setAimMode(false); mouseButtons = 0; svc.resetInputs() }
+            else if (captureRequested) requestPointerCapture()
         }
-
-        override fun onGenericMotionEvent(e: MotionEvent): Boolean {
+        override fun onPointerCaptureChange(hasCapture: Boolean) {
+            super.onPointerCaptureChange(hasCapture)
+            aimMode = hasCapture; control?.text = if (hasCapture) "AIM" else "GEN"
+            svc.inputStatus = if (hasCapture) "Mouse relatif aktif · Esc untuk keluar" else "Mouse bebas · F8 untuk capture"
+            if (!hasCapture) { captureRequested = false; mouseButtons = 0; svc.resetInputs() }
+        }
+        override fun onCapturedPointerEvent(e: MotionEvent): Boolean {
+            if (!aimMode) return false
+            if (e.actionMasked == MotionEvent.ACTION_CANCEL) { setAimMode(false); return true }
+            val buttons = e.buttonState
+            val masks = intArrayOf(MotionEvent.BUTTON_PRIMARY, MotionEvent.BUTTON_SECONDARY,
+                MotionEvent.BUTTON_TERTIARY, MotionEvent.BUTTON_BACK, MotionEvent.BUTTON_FORWARD)
+            masks.forEachIndexed { index, mask ->
+                if ((buttons and mask) != (mouseButtons and mask))
+                    svc.routeKey(KeyEvent.KEYCODE_BUTTON_1 + index, (buttons and mask) != 0)
+            }
+            mouseButtons = buttons
             if (e.actionMasked == MotionEvent.ACTION_SCROLL) {
                 val v = e.getAxisValue(MotionEvent.AXIS_VSCROLL)
-                if (v > 0) svc.fireVirtualKey(KeyNames.MOUSE_SCROLL_UP)
-                else if (v < 0) svc.fireVirtualKey(KeyNames.MOUSE_SCROLL_DOWN)
-                return true
+                if (v != 0f) svc.wheel(v > 0)
+            } else if (e.actionMasked == MotionEvent.ACTION_MOVE || e.actionMasked == MotionEvent.ACTION_HOVER_MOVE) {
+                svc.cameraMove(e.x, e.y)
             }
-            return super.onGenericMotionEvent(e)
-        }
-
-        override fun onTouchEvent(e: MotionEvent): Boolean {
-            if (e.isFromSource(android.view.InputDevice.SOURCE_MOUSE)) {
-                if (e.actionMasked == MotionEvent.ACTION_DOWN) {
-                    val code = when {
-                        (e.buttonState and MotionEvent.BUTTON_SECONDARY) != 0 -> android.view.KeyEvent.KEYCODE_BUTTON_2
-                        (e.buttonState and MotionEvent.BUTTON_TERTIARY) != 0 -> android.view.KeyEvent.KEYCODE_BUTTON_3
-                        (e.buttonState and MotionEvent.BUTTON_BACK) != 0 -> android.view.KeyEvent.KEYCODE_BUTTON_4
-                        (e.buttonState and MotionEvent.BUTTON_FORWARD) != 0 -> android.view.KeyEvent.KEYCODE_BUTTON_5
-                        else -> android.view.KeyEvent.KEYCODE_BUTTON_1
-                    }
-                    if (svc.routeOverlayMouseButton(code, true)) {
-                        capturedMouseKey = code
-                        return true
-                    }
-                }
-                if (capturedMouseKey != -1) {
-                    if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) {
-                        svc.routeOverlayMouseButton(capturedMouseKey, false)
-                        capturedMouseKey = -1
-                    }
-                    return true
-                }
-            }
-            // Fullscreen overlays can receive their own injected touchscreen events.
-            // Do not re-inject them: avoids an input feedback loop on Android 15.
-            if (e.isFromSource(android.view.InputDevice.SOURCE_TOUCHSCREEN)) return true
-            passthroughFor(180)
-            svc.forwardPointer(e)
             return true
         }
+    }
+    private fun dismissPopup() { remove(popup); popup = null }
+    private fun showPopup() {
+        if (popup != null) { dismissPopup(); return }
+        setAimMode(false)
+        val box = LinearLayout(svc).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(14), dp(14), dp(14), dp(8))
+            background = round("#171B2B")
+        }
+        box.addView(TextView(svc).apply {
+            text = "GENKEY  /  SESSION"; textSize = 11f; setTextColor(Color.parseColor("#69E1CE"))
+            setPadding(0, 0, 0, dp(6))
+        })
+        box.addView(TextView(svc).apply {
+            text = svc.inputStatus; textSize = 12f; setTextColor(Color.WHITE)
+            setPadding(0, 0, 0, dp(12))
+        })
+        fun item(label: String, action: () -> Unit) {
+            box.addView(TextView(svc).apply {
+                text = label; textSize = 13f; setTextColor(Color.WHITE); gravity = Gravity.CENTER_VERTICAL
+                minHeight = dp(46); setPadding(dp(12), dp(8), dp(12), dp(8)); background = round("#292C43", 12)
+                setOnClickListener { dismissPopup(); action() }
+            }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(7) })
+        }
+        item("Edit kontrol") { svc.openEditor() }
+        item("Fokus keyboard") { focusKeyboard() }
+        item("Tangkap mouse · F8 / Esc") { setAimMode(true) }
+        item(if (svc.store.mappingEnabled) "Jeda mapping · F9" else "Lanjutkan mapping · F9") { svc.togglePause() }
+        item(if (svc.store.showChips) "Sembunyikan petunjuk" else "Tampilkan petunjuk") {
+            svc.store.showChips = !svc.store.showChips; refreshPreviews()
+        }
+        item("Lepaskan semua input") { svc.resetInputs() }
+        item("Hentikan sesi") { svc.stopSelf() }
+        val (w, h) = ScreenSpace.size(svc)
+        val scroll = ScrollView(svc).apply { addView(box); isVerticalScrollBarEnabled = false }
+        val lp = WindowManager.LayoutParams(dp(280).coerceAtMost(w - dp(24)), dp(460).coerceAtMost(h - dp(72)), type,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT).apply { gravity = Gravity.CENTER }
+        try { wm.addView(scroll, lp); popup = scroll } catch (e: Exception) { toast("Menu: ${e.message}") }
+    }
+    fun refreshPreviews() {
+        remove(previews); previews = null
+        if (control == null || svc.editorOpen || !svc.store.showChips || !svc.store.mappingEnabled) return
+        val profile = svc.store.profileFor(svc.currentPkg) ?: return
+        val view = object : View(svc) {
+            private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+            override fun onDraw(canvas: Canvas) {
+                fun point(x: Float, y: Float, label: String, joy: Boolean) {
+                    val cx = x * width; val cy = y * height
+                    val radius = dp(if (joy) 27 else 20).toFloat()
+                    paint.color = Color.parseColor(if (joy) "#207E72" else "#6453B6"); paint.style = Paint.Style.FILL
+                    canvas.drawCircle(cx, cy, radius, paint)
+                    paint.color = Color.WHITE; paint.style = Paint.Style.STROKE; paint.strokeWidth = dp(1).toFloat()
+                    canvas.drawCircle(cx, cy, radius, paint)
+                    paint.style = Paint.Style.FILL; paint.textSize = dp(11).toFloat(); paint.textAlign = Paint.Align.CENTER
+                    canvas.drawText(label, cx, cy - (paint.ascent() + paint.descent()) / 2, paint)
+                }
+                profile.keys.forEach { point(it.x, it.y, KeyNames.label(it.keyCode), false) }
+                profile.joys.forEach { point(it.x, it.y, "JOY", true) }
+                profile.camera?.let { point(it.x, it.y, "CAM", true) }
+            }
+        }
+        val lp = WindowManager.LayoutParams(-1, -1, type,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                ScreenSpace.edgeFlags(), PixelFormat.TRANSLUCENT)
+        ScreenSpace.configure(lp)
+        // A single window prevents overlapping chips from adding up to opacity > 0.8.
+        lp.alpha = 0.45f
+        runCatching { wm.addView(view, lp); previews = view }
     }
 }

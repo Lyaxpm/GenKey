@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.gen.keymapper">
+>
 
     <!-- TIDAK ada INTERNET, TIDAK ada BILLING: semua fitur gratis, tanpa VIP. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
@@ -17,10 +17,10 @@
     </queries>
 
     <application
-        android:label="Gen Keymapper"
-        android:icon="@android:drawable/sym_def_app_icon"
+        android:label="GenKey"
+        android:icon="@drawable/ic_genkey"
         android:allowBackup="false"
-        android:theme="@android:style/Theme.Material.NoActionBar">
+        android:theme="@style/Theme.GenKey">
 
         <provider
             android:name="rikka.shizuku.ShizukuProvider"
@@ -39,6 +39,8 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity android:name=".InputTestActivity" android:exported="false" />
 
         <service
             android:name=".MapperService"

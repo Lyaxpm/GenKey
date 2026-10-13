@@ -1,53 +1,75 @@
-# GenKeymapper 2.1 — UI baru, Android 15, Shizuku, tanpa Accessibility
+# GenKey 3.0
 
-Modifikasi independen dari ZIP `GenKeymapper-v2_0-fixed-source.zip` milik pengguna. Desain dan sumber tetap GenKeymapper; [KeySync](https://github.com/aka-munan/keysync) digunakan sebagai referensi pola alur kerja **Shizuku → pemilihan game → overlay mapping**, tanpa menyalin UI maupun kode proyek itu.
+Keymapper Android dengan Shizuku dan editor overlay. Tidak memerlukan Accessibility, root, akun, atau langganan. Minimum Android 8 (API 26), target Android 15 (API 35). Shizuku melalui wireless debugging memerlukan Android 11+; versi lebih lama memerlukan aktivasi ADB dari komputer.
 
-## Perubahan utama
+GenKey dikembangkan secara independen. [KeySync](https://github.com/aka-munan/keysync) menjadi referensi alur Shizuku, pemilihan game, dan overlay. UI dan implementasi baru tidak menyalin kode KeySync atau K2er. GenKey tidak mengklaim kesetaraan penuh dengan K2er Premium.
 
-- **Menghilangkan ketergantungan Accessibility sepenuhnya**: komponen `BIND_ACCESSIBILITY_SERVICE`, deklarasi XML dan `GestureKit` dihapus. Backend injeksi sentuhan kini **Shizuku-only**.
-- `MapperService` adalah foreground service normal (`specialUse`) dengan notifikasi aktif sesuai persyaratan target SDK 35. Hanya dimulai oleh tindakan pengguna dari Activity terlihat.
-- Dashboard dark gaming baru: kontrol utama, indikator Shizuku/overlay, pemilihan aplikasi, profil permainan, impor/ekspor, pengaturan, kartu tindakan.
-- Overlay `TYPE_APPLICATION_OVERLAY` untuk tombol GEN, menu cepat, pratinjau chip, dan editor drag-and-drop fullscreen. Tidak ada lagi `TYPE_ACCESSIBILITY_OVERLAY`.
-- Editor menyimpan posisi **saat ACTION_UP** (bukan setiap layout-change), mendukung Tap/Hold/Swipe/Joystick/Kamera/Scroll, assign keyboard atau tombol mouse.
-- Keyboard ditangkap melalui jendela overlay kecil yang memiliki fokus. Saat game mengambil kembali fokus, tekan tombol **GEN → Fokus ulang keyboard**. Ini *bukan* raw global input capture.
-- Shizuku UserService mengirim perintah pointer multitouch memakai InputManager Android (reflection); keyboard/mouse mapping tetap tergantung kondisi window focus dan kompatibilitas firmware.
-- Profil dipilih **secara eksplisit**, tanpa membaca aplikasi foreground lewat Accessibility. Profil baru langsung disimpan (memperbaiki bug `getOrPut` sebelum `save()`).
-- Preset MMORPG: analog WASD, Q/E/R/F, Space, angka 1–4, area kamera. Profil juga dapat dibackup sebagai JSON.
-- Mode mouse fullscreen masih **beta/eksperimental**. Saat input Shizuku dipicu, layer menangkap mouse dilepas sementara agar sentuhan sintetis tidak berulang masuk ke overlay. Mode ini tidak sama dengan *relative pointer capture* atau global mouse listener.
+## Fitur
 
-## Keterbatasan yang penting
+- Dashboard dengan tab Persiapan/Pengaturan, status perangkat input dan koneksi, pencarian game, ikon aplikasi sendiri, serta penanganan inset Android 15.
+- Profil per game dan profil umum, nama dapat diganti, preset MMORPG/FPS, impor/ekspor JSON melalui pemilih file Android.
+- Editor drag-and-drop: tap, hold, toggle hold, turbo, double tap, swipe dengan titik END, joystick WASD, kamera, dan mouse wheel.
+- Durasi swipe, interval turbo, radius joystick, sensitivitas kamera, invert Y, serta dead zone analog dapat disesuaikan.
+- Beberapa kontrol dapat memakai tombol yang sama untuk menekan beberapa titik sekaligus (maksimal 10 pointer pada backend).
+- Analog kiri gamepad menggerakkan joystick pertama jika opsi gamepad diaktifkan. Tombol gamepad bisa direkam seperti keyboard.
+- Mouse relatif menggunakan `requestPointerCapture()` dan callback `onCapturedPointerEvent`; tidak ada layer mouse fullscreen yang menelan sentuhan game.
+- Backend shell memakai satu event loop terjadwal: tap dan swipe tidak menahan Binder atau mengantrekan seluruh gesture secara serial. Kamera memakai pointer berkelanjutan dengan recenter.
+- Input dilepas saat fokus hilang, perangkat dicabut, rotasi, layar mati, berganti profil, pause, atau sesi berhenti. Watchdog shell membatalkan sentuhan ketika heartbeat berhenti selama >3 detik.
+- Diagnostik penerimaan injeksi serta layar uji yang menghitung MotionEvent dan multitouch yang benar-benar diterima.
 
-- **Belum ada APK yang sukses dibangun/dijalankan di perangkat dalam lingkungan kerja ini**. UI dan backend perlu diuji pada Android 15 nyata sebelum dinyatakan stabil.
-- Saat game mengambil fokus, window overlay kecil tidak selalu menerima keyboard fisik. Mengetuk **Fokus ulang keyboard** dapat membantu tetapi tidak menjamin kompatibilitas semua game atau ROM.
-- Mouse-look absolut (hover) bisa mentok tepi layar; native *relative mouse capture* belum diimplementasikan.
-- Mode mouse beta fullscreen menangkap gesture pada lapisannya; interaksi touchscreen langsung dengan game dapat terganggu. Matikan saat ingin bermain dengan sentuhan asli.
-- Status Shizuku `Terhubung` hanya berarti UserService tersedia, **bukan bukti game menerima injeksi**.
-- Shizuku yang dimulai lewat Wireless Debugging biasanya harus dinyalakan ulang setelah reboot.
-- Game tertentu dapat memblokir overlay dan injeksi input; tidak ada fitur bypass anti-cheat, lisensi, atau perlindungan game.
+## Cara menggunakan
 
-## Cara memakai (Android 15)
+1. Install dan jalankan [Shizuku](https://shizuku.rikka.app/guide/setup/), lalu buka **Persiapan → Hubungkan Shizuku**.
+2. Berikan izin tampil di atas aplikasi. Notifikasi sesi opsional pada Android 13+; tidak perlu mengaktifkan Accessibility.
+3. Jalankan **Uji tap & multitouch**. Tekan tombol tes dan jangan menyentuh area tes selama tes berlangsung. Hasil ini hanya membuktikan injeksi ke layar tes, bukan kompatibilitas semua game.
+4. Di Dashboard, tambah game dan gunakan **Tambah preset** jika diinginkan. Semua posisi preset adalah contoh; sesuaikan ke HUD game.
+5. Tekan **Edit mapping**. Geser kontrol, ketuk untuk mengatur tombol/jenis aksi/durasi/duplikasi, lalu **Selesai**. Geser `END` untuk swipe. Joystick baru sudah berisi WASD.
+6. Ketika bermain, ketuk **GEN → Fokus keyboard**. Tekan **F8** untuk menangkap mouse dan mengaktifkan kamera; **Esc** melepas mouse. **F9** menjeda/melanjutkan mapping. Ketiga tombol ini dicadangkan untuk kontrol sesi.
+7. Selama capture, M1–M5 mengikuti mapping. Preset FPS memetakan M1 sebagai hold tembak dan M2 sebagai toggle bidik. Mouse wheel bisa dipetakan lewat editor. Tanpa capture, mouse dikendalikan Android seperti biasa.
+8. Hentikan sesi melalui GEN atau tombol **Hentikan** di notifikasi.
 
-1. Pasang Shizuku. Mulai via Wireless Debugging lalu izinkan akses ketika GenKeymapper meminta.
-2. Buka GenKeymapper, aktifkan **Display over other apps**. **Tidak perlu Accessibility.**
-3. Tambahkan game dari daftar, pilih profil; opsional terapkan **Preset MMORPG**.
-4. Tekan **Pilih & edit** untuk membuka game dan menampilkan editor overlay, atau **Mainkan** untuk langsung menggunakan profil.
-5. Geser chip ke tombol di HUD; ketuk chip untuk menetapkan keyboard/mouse. Swipe punya titik `END`. Joystick perlu 4 arah.
-6. Tekan **Selesai**. Tombol **GEN** melayang membuka menu cepat untuk mengedit ulang, fokus keyboard, serta menampilkan/menyembunyikan indikator.
-7. Uji mode tap/hold/WASD pada game yang mengizinkan mapping. Mode mouse diberi label beta sampai lolos pengujian perangkat.
+Untuk HP saja: tambahkan kontrol dari toolbar, pilih opsi M1–M5 untuk mouse, dan gunakan keyboard/gamepad fisik untuk merekam tombol. Semua tombol/tampilan dapat disusun langsung di atas game.
 
-## Build APK tanpa PC
+## Build di GitHub Actions
 
-Unggah **isi ZIP** ini ke root sebuah repo GitHub, termasuk `.github/workflows/build.yml`.
-Buka **Actions → Build GenKeymapper Android APK → Run workflow**. Setelah workflow sukses, unduh artifact `GenKeymapper-Android15-Debug-APK`. Alur build menggunakan JDK 17, Gradle 8.11.1, SDK 35.
+Workflow **Build GenKey Android APK** berjalan pada push, pull request, dan `workflow_dispatch`.
 
-Secara lokal (bila Gradle dan Android SDK tersedia):
+1. Buka **Actions → Build GenKey Android APK → Run workflow**.
+2. Workflow menjalankan unit test, Android Lint, build debug, serta build release.
+3. Setelah sukses, unduh **GenKey-v3.0-Debug-APK**. Ekstrak ZIP artifact dan install `GenKey-v3.0-debug.apk`.
+4. Artifact **GenKey-v3.0-Release-UNSIGNED** memerlukan penandatanganan sebelum bisa dipasang. Tidak diperlukan secret untuk build debug atau release unsigned.
+5. **GenKey-validation-reports** memuat laporan test/lint. SHA-256 APK debug tersedia di artifact APK.
+
+Build memakai JDK 17, Gradle Wrapper 8.11.1 dengan checksum distribusi, AGP 8.9.2, Kotlin 2.1.20, SDK/build-tools 35. Tidak memakai Gradle global.
 
 ```bash
-gradle --no-daemon :app:assembleDebug
+chmod +x gradlew
+./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease
 ```
 
-> Pengujian build harus benar-benar berhasil sebelum APK dibagikan ke orang lain. Jangan menganggap ZIP source sebagai APK siap instal.
+Set `ANDROID_HOME` atau `sdk.dir` di `local.properties`. File konfigurasi SDK lokal, APK, dan keystore tidak disimpan ke Git. Debug APK dari runner berbeda bisa memakai kunci debug berbeda: jika Android menolak update karena tanda tangan, ekspor profil terlebih dahulu sebelum uninstall versi lama. Untuk distribusi rutin, tandatangani release dengan keystore tetap milik sendiri.
+
+## Batasan yang harus dipahami
+
+- Keyboard dan gamepad ditangkap melalui jendela overlay yang memiliki fokus, **bukan listener input global/native evdev**. Menyentuh game atau kebijakan firmware dapat memindahkan fokus. GEN → Fokus keyboard tersedia untuk mengambilnya kembali.
+- Pointer capture baru berstatus aktif setelah callback Android menyatakan berhasil. ROM yang menolak capture pada overlay akan menampilkan pesan gagal. Belum ada jaminan kompatibilitas mouse untuk seluruh firmware.
+- `injectInputEvent` adalah API internal Android. Izin shell, implementasi vendor, atau kebijakan game bisa menolak injeksi. Penghitung “Diterima” berarti InputManager menerima permintaan; layar uji dan pengujian game tetap diperlukan.
+- Tidak ada deteksi game foreground otomatis. Pilih profil yang benar secara manual. Hindari multi-window; mapping memakai koordinat layar utama penuh.
+- Tidak ada macro recorder, cloud sync, auto-switch profil, atau mouse capture native tanpa fokus. Fitur tersebut tidak ditampilkan sebagai fitur aktif.
+- Shizuku perlu diaktifkan kembali setelah reboot. Game dapat membatasi overlay/input sintetis.
+- Build dan unit test tidak menggantikan pengujian perangkat fisik. Daftar pemeriksaan ada di [docs/DEVICE_TESTING.md](docs/DEVICE_TESTING.md).
 
 ## Struktur
 
-`MainActivity.kt`: dashboard; `MapperService.kt`: service notifikasi dan key routing; `EditorOverlay.kt`: drag & assign; `PlayOverlay.kt`: overlay control/pratinjau/keyboard focus; `ShizukuBridge.kt`: koneksi/izin; `ShellInputService.kt`: injeksi shell; `MappingStore.kt` + `Models.kt`: profil JSON; `.github/workflows/build.yml`: CI.
+| File | Fungsi |
+|---|---|
+| `MainActivity.kt` | Dashboard, setup, pemilihan game, backup, pengaturan |
+| `EditorOverlay.kt` | Editor drag/drop dan konfigurasi kontrol |
+| `PlayOverlay.kt` | Bubble, fokus keyboard, relative pointer capture, preview |
+| `MapperService.kt` | Routing input, kombinasi kontrol, lifecycle sesi |
+| `ShizukuBridge.kt` | Koneksi shell, izin, IPC dan diagnostik |
+| `ShellInputService.kt` | Event loop injeksi multitouch dan watchdog |
+| `TouchState.kt` | Pointer ID/index dan vektor joystick yang diuji unit |
+| `ProfileCodec.kt` / `MappingStore.kt` | Validasi JSON dan penyimpanan atomik |
+| `ScreenSpace.kt` | Koordinat layar yang sama untuk editor/input |
+| `InputTestActivity.kt` | Tes penerimaan MotionEvent di perangkat |

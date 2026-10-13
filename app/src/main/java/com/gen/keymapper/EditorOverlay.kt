@@ -40,6 +40,7 @@ class EditorOverlay(
 
     private var root: FrameLayout? = null
     private var assigningId: String? = null
+    private val dialogs = mutableListOf<AlertDialog>()
 
     private fun dp(v: Int): Int = (v * svc.resources.displayMetrics.density).toInt()
 
@@ -54,7 +55,13 @@ class EditorOverlay(
         val dm = svc.resources.displayMetrics
         val r = object : FrameLayout(svc) {
             override fun dispatchKeyEvent(event: KeyEvent): Boolean =
-                svc.handleKeyEvent(event) || super.dispatchKeyEvent(event)
+                if (event.keyCode == KeyEvent.KEYCODE_BACK || event.keyCode == KeyEvent.KEYCODE_ESCAPE) {
+                    if (event.action == KeyEvent.ACTION_UP) {
+                        if (svc.assignTarget != null) { svc.assignTarget = null; svc.onAssign = null; assigningId = null; refreshChips() }
+                        else onClose()
+                    }
+                    true
+                } else svc.handleKeyEvent(event) || super.dispatchKeyEvent(event)
         }.apply {
             isFocusable = true
             isFocusableInTouchMode = true
@@ -110,7 +117,7 @@ class EditorOverlay(
             background = GradientDrawable().apply {
                 setColor(Color.parseColor("#8B7DFF")); cornerRadius = dp(13).toFloat()
             }
-            setOnClickListener { svc.store.save(); onClose() }
+            setOnClickListener { if (save()) onClose() }
         }
         head.addView(done)
         r.addView(head, FrameLayout.LayoutParams(-1, -2, Gravity.TOP).apply {
@@ -140,14 +147,16 @@ class EditorOverlay(
         }
         toolBtn("＋  Tap") { addKey("tap") }
         toolBtn("＋  Hold") { addKey("hold") }
+        toolBtn("＋  Toggle") { addKey("toggle") }
+        toolBtn("＋  Turbo") { addKey("repeat") }
+        toolBtn("＋  Double") { addKey("double") }
         toolBtn("＋  Swipe") { addKey("swipe") }
         toolBtn("＋  Joystick") { addJoy() }
         toolBtn("＋  Scroll ↑") { addWheel(KeyNames.MOUSE_SCROLL_UP) }
         toolBtn("＋  Scroll ↓") { addWheel(KeyNames.MOUSE_SCROLL_DOWN) }
-        toolBtn("＋  Kamera") { profile.camera = CameraMap(); svc.store.save(); refreshChips() }
+        toolBtn("＋  Kamera") { profile.camera = CameraMap(); save(); refreshChips() }
         toolBtn("Simpan") {
-            svc.store.save()
-            Toast.makeText(svc, "Mapping disimpan", Toast.LENGTH_SHORT).show()
+            if (save()) Toast.makeText(svc, "Mapping disimpan", Toast.LENGTH_SHORT).show()
         }
         val scroller = android.widget.HorizontalScrollView(svc).apply {
             isHorizontalScrollBarEnabled = false
@@ -162,40 +171,44 @@ class EditorOverlay(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
             overlayType,
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            ScreenSpace.edgeFlags() or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         )
+        ScreenSpace.configure(params)
         try {
             wm.addView(r, params)
             r.requestFocus()
         } catch (_: Exception) {
-            root = null; return
+            root = null
+            Toast.makeText(svc, "Editor gagal dibuka", Toast.LENGTH_LONG).show()
+            onClose(); return
         }
-        refreshChips()
+        r.post { refreshChips() }
     }
 
     fun hide() {
+        dialogs.toList().forEach { it.dismiss() }; dialogs.clear()
+        svc.assignTarget = null; svc.onAssign = null
         root?.let { try { wm.removeView(it) } catch (_: Exception) {} }
         root = null
     }
 
     private fun addKey(action: String) {
         profile.keys.add(KeyMap(action = action, x = 0.5f, y = 0.4f))
-        svc.store.save()
+        save()
         refreshChips()
         Toast.makeText(svc, "Chip baru: tap lalu tekan tombol", Toast.LENGTH_SHORT).show()
     }
 
     private fun addWheel(code: Int) {
         profile.keys.add(KeyMap(keyCode = code, action = "tap", x = 0.5f, y = 0.4f))
-        svc.store.save()
+        save()
         refreshChips()
     }
 
     private fun addJoy() {
         profile.joys.add(JoyMap())
-        svc.store.save()
+        save()
         refreshChips()
         Toast.makeText(svc, "Joystick baru: tap untuk isi WASD", Toast.LENGTH_SHORT).show()
     }
@@ -216,11 +229,12 @@ class EditorOverlay(
         r.findViewWithTag<View>("mappingLines")?.invalidate()
         profile.joys.forEach { addJoyChip(r, it) }
         profile.camera?.let { addCameraChip(r, it) }
+        (0 until r.childCount).map { r.getChildAt(it) }.filter { it.tag != "chip" && it.tag != "mappingLines" }.forEach { it.bringToFront() }
     }
 
     private fun screenWH(): Pair<Int, Int> {
-        val dm = svc.resources.displayMetrics
-        return dm.widthPixels to dm.heightPixels
+        val r = root
+        return if (r != null && r.width > 0 && r.height > 0) r.width to r.height else ScreenSpace.size(svc)
     }
 
     // ---------- chip tombol ----------
@@ -253,7 +267,7 @@ class EditorOverlay(
                 shape = GradientDrawable.OVAL; setColor(Color.parseColor("#D32F2F"))
             }
             setOnClickListener {
-                profile.keys.remove(km); svc.store.save(); refreshChips()
+                profile.keys.remove(km); save(); refreshChips()
             }
         }
         val ds = dp(22)
@@ -265,9 +279,9 @@ class EditorOverlay(
             topMargin = (km.y * h - size / 2).toInt().coerceIn(0, (h - size).coerceAtLeast(0))
         }
         makeDraggable(chip, lp, w, h,
-            onTap = { beginAssignKey(km) },
+            onTap = { keyOptions(km) },
             onDrop = { nx, ny ->
-                km.x = nx; km.y = ny; svc.store.save()
+                km.x = nx; km.y = ny; save()
                 root.findViewWithTag<View>("mappingLines")?.invalidate()
             })
         root.addView(chip, lp)
@@ -281,7 +295,7 @@ class EditorOverlay(
             background = chipBg(Color.parseColor("#C0634A9E"))
         }
         val label = TextView(svc).apply {
-            text = "🖱\nCAM"
+            text = "CAM\nF8"
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
             textSize = 11f
@@ -292,7 +306,7 @@ class EditorOverlay(
             setTextColor(Color.WHITE)
             textSize = 16f
             gravity = Gravity.CENTER
-            setOnClickListener { profile.camera = null; svc.store.save(); refreshChips() }
+            setOnClickListener { profile.camera = null; save(); refreshChips() }
         }
         chip.addView(del, FrameLayout.LayoutParams(dp(22), dp(22), Gravity.TOP or Gravity.END))
         val lp = FrameLayout.LayoutParams(size, size).apply {
@@ -301,7 +315,7 @@ class EditorOverlay(
         }
         makeDraggable(chip, lp, w, h,
             onTap = { Toast.makeText(svc, "Area swipe kamera. Geser ke sisi game yang dipakai untuk melihat.", Toast.LENGTH_LONG).show() },
-            onDrop = { x, y -> camera.x = x; camera.y = y; svc.store.save() })
+            onDrop = { x, y -> camera.x = x; camera.y = y; save() })
         root.addView(chip, lp)
     }
 
@@ -325,7 +339,7 @@ class EditorOverlay(
             onDrop = { x, y ->
                 map.dx = (x - map.x).coerceIn(-1f, 1f)
                 map.dy = (y - map.y).coerceIn(-1f, 1f)
-                svc.store.save()
+                save()
                 root.findViewWithTag<View>("mappingLines")?.invalidate()
             })
         root.addView(endChip, lp)
@@ -345,7 +359,7 @@ class EditorOverlay(
         }
         val filled = listOf(jm.up, jm.down, jm.left, jm.right).count { it >= 0 }
         val label = TextView(svc).apply {
-            text = "🕹\n$filled/4"
+            text = "WASD\n$filled/4"
             setTextColor(Color.WHITE)
             textSize = 13f
             gravity = Gravity.CENTER
@@ -359,7 +373,7 @@ class EditorOverlay(
                 shape = GradientDrawable.OVAL; setColor(Color.parseColor("#D32F2F"))
             }
             setOnClickListener {
-                profile.joys.remove(jm); svc.store.save(); refreshChips()
+                profile.joys.remove(jm); save(); refreshChips()
             }
         }
         val ds = dp(22)
@@ -372,7 +386,7 @@ class EditorOverlay(
         }
         makeDraggable(chip, lp, w, h,
             onTap = { showJoySlots(jm) },
-            onDrop = { nx, ny -> jm.x = nx; jm.y = ny; svc.store.save() })
+            onDrop = { nx, ny -> jm.x = nx; jm.y = ny; save() })
         root.addView(chip, lp)
     }
 
@@ -413,6 +427,53 @@ class EditorOverlay(
 
     // ---------- assign tombol ----------
 
+    private fun save(): Boolean {
+        val ok = svc.store.save()
+        if (!ok) Toast.makeText(svc, svc.store.lastError, Toast.LENGTH_LONG).show()
+        return ok
+    }
+    private fun showDialog(dialog: AlertDialog) {
+        dialogs.add(dialog)
+        dialog.setOnDismissListener { dialogs.remove(dialog); root?.requestFocus() }
+        dialog.window?.setType(overlayType)
+        dialog.show()
+        val (w, h) = ScreenSpace.size(svc)
+        dialog.window?.setLayout(dp(380).coerceAtMost(w - dp(32)), -2)
+    }
+    private fun keyOptions(map: KeyMap) {
+        showDialog(AlertDialog.Builder(svc).setTitle("${KeyNames.label(map.keyCode)} · ${map.actionLabel()}")
+            .setItems(arrayOf("Pasang tombol", "Jenis aksi", "Durasi / interval", "Duplikat kontrol", "Hapus kontrol")) { _, i ->
+                when (i) {
+                    0 -> beginAssignKey(map)
+                    1 -> {
+                        val values = arrayOf("tap", "hold", "swipe", "toggle", "repeat", "double")
+                        showDialog(AlertDialog.Builder(svc).setTitle("Jenis aksi")
+                            .setSingleChoiceItems(arrayOf("Tap sekali", "Tahan selama ditekan", "Swipe ke END", "Toggle tahan", "Turbo selama ditekan", "Tap dua kali"), values.indexOf(map.action)) { d, n ->
+                                map.action = values[n]; save(); refreshChips(); d.dismiss()
+                            }.setNegativeButton("Batal", null).create())
+                    }
+                    2 -> {
+                        val input = android.widget.EditText(svc).apply {
+                            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+                            setText((if (map.action == "repeat") map.intervalMs else map.dur).toString())
+                        }
+                        showDialog(AlertDialog.Builder(svc).setTitle(if (map.action == "repeat") "Interval turbo 50–3000 ms" else "Durasi swipe 50–3000 ms")
+                            .setView(input).setPositiveButton("Simpan") { _, _ ->
+                                input.text.toString().toLongOrNull()?.coerceIn(50, 3000)?.let {
+                                    if (map.action == "repeat") map.intervalMs = it else map.dur = it
+                                    save()
+                                }
+                            }.setNegativeButton("Batal", null).create())
+                    }
+                    3 -> {
+                        profile.keys.add(map.copy(id = java.util.UUID.randomUUID().toString(), x = (map.x + .08f).coerceAtMost(.95f)))
+                        save(); refreshChips()
+                    }
+                    4 -> { profile.keys.remove(map); save(); refreshChips() }
+                }
+            }.setNegativeButton("Tutup", null).create())
+    }
+
     private fun beginAssignKey(km: KeyMap) {
         val options = arrayOf("Rekam tombol keyboard / gamepad", "Mouse Kiri (M1)",
             "Mouse Kanan (M2)", "Mouse Tengah (M3)", "Mouse Samping (M4)", "Mouse Samping (M5)")
@@ -426,19 +487,18 @@ class EditorOverlay(
                     svc.onAssign = { code ->
                         km.keyCode = code
                         assigningId = null
-                        svc.store.save()
+                        save()
                         refreshChips()
                     }
                     Toast.makeText(svc, "Tekan tombol keyboard / gamepad sekarang", Toast.LENGTH_LONG).show()
                 } else {
                     km.keyCode = android.view.KeyEvent.KEYCODE_BUTTON_1 + which - 1
-                    svc.store.save()
+                    save()
                     refreshChips()
                 }
             }
             .setNegativeButton("Batal", null).create()
-        dlg.window?.setType(overlayType)
-        dlg.show()
+        showDialog(dlg)
     }
 
     private fun beginAssignJoySlot(jm: JoyMap, slot: String) {
@@ -449,7 +509,7 @@ class EditorOverlay(
         svc.onAssign = { kc ->
             jm.setSlot(slot, kc)
             assigningId = null
-            svc.store.save()
+            save()
             refreshChips()
             Toast.makeText(svc, "${jm.slotLabel(slot)} = ${KeyNames.describe(kc)}", Toast.LENGTH_SHORT).show()
         }
@@ -460,16 +520,23 @@ class EditorOverlay(
         val items = slots.map { s ->
             val cur = jm.slotKey(s)
             "${jm.slotLabel(s)} : ${if (cur >= 0) KeyNames.label(cur) else "—"}"
-        }.toTypedArray()
+        }.toTypedArray() + arrayOf("Radius: ${jm.radiusDp.takeIf { it > 0 } ?: svc.store.joyRadiusDp} dp")
         val dlg = AlertDialog.Builder(svc)
-            .setTitle("Joystick — pilih arah untuk dipasang")
-            .setItems(items) { _, which -> beginAssignJoySlot(jm, slots[which]) }
+            .setTitle("Joystick — arah & radius")
+            .setItems(items) { _, which ->
+                if (which < 4) beginAssignJoySlot(jm, slots[which]) else {
+                    val input = android.widget.EditText(svc).apply {
+                        inputType = android.text.InputType.TYPE_CLASS_NUMBER
+                        setText((jm.radiusDp.takeIf { it > 0 } ?: svc.store.joyRadiusDp).toString())
+                    }
+                    showDialog(AlertDialog.Builder(svc).setTitle("Radius 20–220 dp").setView(input)
+                        .setPositiveButton("Simpan") { _, _ ->
+                            input.text.toString().toIntOrNull()?.let { jm.radiusDp = it.coerceIn(20, 220); save() }
+                        }.setNegativeButton("Batal", null).create())
+                }
+            }
             .setNegativeButton("Tutup", null)
             .create()
-        try {
-            dlg.window?.setType(overlayType)
-        } catch (_: Exception) {
-        }
-        dlg.show()
+        showDialog(dlg)
     }
 }
