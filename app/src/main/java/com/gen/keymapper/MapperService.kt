@@ -110,6 +110,7 @@ class MapperService : Service(), InputManager.InputDeviceListener {
         play?.refreshPreviews()
     }
     fun reloadProfiles() { resetInputs(); if (editorOpen) closeEditor(); store.load(); play?.refreshPreviews() }
+    fun suspendForDashboard() { resetInputs(); play?.hide() }
     fun pause() {
         store.mappingEnabled = false; resetInputs(); play?.setAimMode(false); play?.refreshPreviews()
     }
@@ -124,6 +125,10 @@ class MapperService : Service(), InputManager.InputDeviceListener {
         val down = event.action == KeyEvent.ACTION_DOWN
         if (assignTarget != null) {
             if (down && event.repeatCount == 0) {
+                if (code == KeyEvent.KEYCODE_F8 || code == KeyEvent.KEYCODE_F9) {
+                    android.widget.Toast.makeText(this, "F8 dan F9 dipakai untuk kontrol sesi. Pilih tombol lain.", android.widget.Toast.LENGTH_SHORT).show()
+                    return true
+                }
                 val callback = onAssign; assignTarget = null; onAssign = null
                 if (code != KeyEvent.KEYCODE_ESCAPE) callback?.invoke(code)
             }

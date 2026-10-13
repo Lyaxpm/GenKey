@@ -16,6 +16,7 @@ class InputTestActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         MapperService.instance?.pause()
+        MapperService.instance?.suspendForDashboard()
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(24, 36, 24, 24); setBackgroundColor(Color.rgb(12, 16, 29))
         }

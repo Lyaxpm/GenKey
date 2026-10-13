@@ -166,6 +166,32 @@ class EditorOverlay(
             bottomMargin = dp(14); leftMargin = dp(10); rightMargin = dp(10)
         })
 
+        r.setOnApplyWindowInsetsListener { _, insets ->
+            val top: Int
+            val bottom: Int
+            val left: Int
+            val right: Int
+            if (Build.VERSION.SDK_INT >= 30) {
+                val edges = insets.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
+                top = edges.top; bottom = edges.bottom; left = edges.left; right = edges.right
+            } else {
+                @Suppress("DEPRECATION")
+                top = insets.systemWindowInsetTop
+                @Suppress("DEPRECATION")
+                bottom = insets.systemWindowInsetBottom
+                @Suppress("DEPRECATION")
+                left = insets.systemWindowInsetLeft
+                @Suppress("DEPRECATION")
+                right = insets.systemWindowInsetRight
+            }
+            (head.layoutParams as FrameLayout.LayoutParams).let {
+                it.topMargin = top + dp(10); it.leftMargin = left + dp(10); it.rightMargin = right + dp(10); head.layoutParams = it
+            }
+            (scroller.layoutParams as FrameLayout.LayoutParams).let {
+                it.bottomMargin = bottom + dp(10); it.leftMargin = left + dp(10); it.rightMargin = right + dp(10); scroller.layoutParams = it
+            }
+            insets
+        }
         root = r
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -177,7 +203,7 @@ class EditorOverlay(
         ScreenSpace.configure(params)
         try {
             wm.addView(r, params)
-            r.requestFocus()
+            r.requestFocus(); r.requestApplyInsets()
         } catch (_: Exception) {
             root = null
             Toast.makeText(svc, "Editor gagal dibuka", Toast.LENGTH_LONG).show()

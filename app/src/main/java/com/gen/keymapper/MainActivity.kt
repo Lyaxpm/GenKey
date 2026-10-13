@@ -70,7 +70,7 @@ class MainActivity : Activity() {
         setContentView(scroll)
         scroll.requestApplyInsets()
     }
-    override fun onResume() { super.onResume(); store.load(); draw(); main.post(poll) }
+    override fun onResume() { super.onResume(); MapperService.instance?.suspendForDashboard(); store.load(); draw(); main.post(poll) }
     override fun onPause() { main.removeCallbacks(poll); super.onPause() }
     override fun onDestroy() { main.removeCallbacksAndMessages(null); super.onDestroy() }
     override fun onConfigurationChanged(config: android.content.res.Configuration) { super.onConfigurationChanged(config); draw() }
@@ -245,7 +245,7 @@ class MainActivity : Activity() {
                 action(if (active) "✎  Edit mapping" else "▶  Pilih & edit", true) {
                     selectGame(p.pkg)
                     if (p.pkg == "*") startMapper(true) else {
-                        if (startMapper(false)) launchGame(p.pkg, true)
+                        launchGame(p.pkg, true)
                     }
                 },
                 action("Mainkan") { selectGame(p.pkg); launchGame(p.pkg) }
