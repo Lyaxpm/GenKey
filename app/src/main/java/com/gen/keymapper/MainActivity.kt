@@ -164,7 +164,7 @@ class MainActivity : Activity() {
         ))
         root.addView(hero)
         root.addView(space(18))
-        val devices = android.view.InputDevice.getDeviceIds().mapNotNull { android.view.InputDevice.getDevice(it) }
+        val devices = android.view.InputDevice.getDeviceIds().map { android.view.InputDevice.getDevice(it) }.filterNotNull()
             .filter { !it.isVirtual && (it.supportsSource(android.view.InputDevice.SOURCE_KEYBOARD) || it.supportsSource(android.view.InputDevice.SOURCE_MOUSE) || it.supportsSource(android.view.InputDevice.SOURCE_GAMEPAD)) }
         val deviceCard = panel()
         deviceCard.addView(text("PERANGKAT INPUT", 11f, cyan, true))
