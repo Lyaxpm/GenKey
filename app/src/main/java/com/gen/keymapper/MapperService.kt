@@ -76,7 +76,7 @@ class MapperService : Service(), CaptureLayout.Sink, InputEngine.Host, EditorUi.
         store.load()
         engine = InputEngine(store, this)
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        ShizukuBridge.initialize(this)
+        Backend.initialize(this)
         notifyState()
     }
 
@@ -91,8 +91,8 @@ class MapperService : Service(), CaptureLayout.Sink, InputEngine.Host, EditorUi.
             stopSelf()
             return START_NOT_STICKY
         }
-        ShizukuBridge.initialize(this)
-        ShizukuBridge.connect()
+        Backend.initialize(this)
+        Backend.connect()
 
         val pkg = intent?.getStringExtra(EXTRA_PKG)
         val wantEdit = intent?.getBooleanExtra(EXTRA_EDIT, false) == true
@@ -421,13 +421,18 @@ class MapperService : Service(), CaptureLayout.Sink, InputEngine.Host, EditorUi.
         if (mode == Mode.PLAY && recordCb == null) engine.onMouseMove(dx, dy)
     }
 
-    override fun onWheel(v: Float) {
-        if (v == 0f) return
+    override fun onWheel(v: Float, h: Float) {
+        if (v == 0f && h == 0f) return
         if (recordCb != null) {
-            finishRecord(if (v > 0f) KeyNames.WHEEL_UP else KeyNames.WHEEL_DOWN)
+            finishRecord(when {
+                h < 0f -> KeyNames.WHEEL_LEFT
+                h > 0f -> KeyNames.WHEEL_RIGHT
+                v > 0f -> KeyNames.WHEEL_UP
+                else -> KeyNames.WHEEL_DOWN
+            })
             return
         }
-        if (mode == Mode.PLAY) engine.onWheel(v)
+        if (mode == Mode.PLAY) engine.onWheel(v, h)
     }
 
     override fun onFocus(has: Boolean) {
@@ -455,7 +460,7 @@ class MapperService : Service(), CaptureLayout.Sink, InputEngine.Host, EditorUi.
             wm.updateViewLayout(r, lp)
         } catch (_: Throwable) {
         }
-        handler.postDelayed({ ShizukuBridge.key(KeyEvent.KEYCODE_BACK) }, 90)
+        handler.postDelayed({ Backend.key(KeyEvent.KEYCODE_BACK) }, 90)
         handler.postDelayed({
             if (mode == Mode.PLAY) {
                 applyWindowFlags()
@@ -671,10 +676,11 @@ class MapperService : Service(), CaptureLayout.Sink, InputEngine.Host, EditorUi.
         override fun run() {
             val b = board
             if (b != null && recordCb == null) {
-                if (!ShizukuBridge.isReady()) {
-                    ShizukuBridge.connect()
-                    if (mode == Mode.PLAY) b.banner = "Shizuku belum terhubung — buka GenKeymapper"
-                } else if (b.banner?.startsWith("Shizuku") == true) {
+                if (!Backend.isReady()) {
+                    engine.releaseAll()
+                    Backend.connect()
+                    if (mode == Mode.PLAY) b.banner = "Layanan input belum terhubung — buka GenKeymapper"
+                } else if (b.banner?.startsWith("Layanan input") == true) {
                     b.banner = null
                 }
             }
