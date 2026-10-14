@@ -99,20 +99,34 @@ class PlayOverlay(private val svc: MapperService) {
     }
     private inner class InputSink(context: Context) : View(context) {
         private var mouseButtons = 0
+        private var deltaX = 0f
+        private var deltaY = 0f
+        private var framePending = false
+        private val mouseFrame = Runnable {
+            framePending = false
+            if (aimMode && sink === this) svc.cameraMove(deltaX, deltaY)
+            deltaX = 0f; deltaY = 0f
+        }
+        private fun clearMouse() {
+            mouseButtons = 0; deltaX = 0f; deltaY = 0f; framePending = false
+            main.removeCallbacks(mouseFrame)
+        }
         init { isFocusable = true; isFocusableInTouchMode = true }
         override fun dispatchKeyEvent(event: KeyEvent) = svc.handleKeyEvent(event) || super.dispatchKeyEvent(event)
         override fun onGenericMotionEvent(event: MotionEvent) = svc.gamepad(event) || super.onGenericMotionEvent(event)
         override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
             super.onWindowFocusChanged(hasWindowFocus)
+            if (sink !== this) return
             svc.inputStatus = if (hasWindowFocus) "Keyboard siap · F8 mouse · F9 jeda" else "Fokus lepas · ketuk GEN → Fokus keyboard"
-            if (!hasWindowFocus) { setAimMode(false); mouseButtons = 0; svc.resetInputs() }
+            if (!hasWindowFocus) { setAimMode(false); clearMouse(); svc.resetInputs() }
             else if (captureRequested) requestPointerCapture()
         }
         override fun onPointerCaptureChange(hasCapture: Boolean) {
             super.onPointerCaptureChange(hasCapture)
+            if (sink !== this) return
             aimMode = hasCapture; control?.text = if (hasCapture) "AIM" else "GEN"
             svc.inputStatus = if (hasCapture) "Mouse relatif aktif · Esc untuk keluar" else "Mouse bebas · F8 untuk capture"
-            if (!hasCapture) { captureRequested = false; mouseButtons = 0; svc.resetInputs() }
+            if (!hasCapture) { captureRequested = false; clearMouse(); svc.resetInputs() }
         }
         override fun onCapturedPointerEvent(e: MotionEvent): Boolean {
             if (!aimMode) return false
@@ -129,7 +143,8 @@ class PlayOverlay(private val svc: MapperService) {
                 val v = e.getAxisValue(MotionEvent.AXIS_VSCROLL)
                 if (v != 0f) svc.wheel(v > 0)
             } else if (e.actionMasked == MotionEvent.ACTION_MOVE || e.actionMasked == MotionEvent.ACTION_HOVER_MOVE) {
-                svc.cameraMove(e.x, e.y)
+                deltaX += e.x; deltaY += e.y
+                if (!framePending) { framePending = true; main.postDelayed(mouseFrame, 8) }
             }
             return true
         }
