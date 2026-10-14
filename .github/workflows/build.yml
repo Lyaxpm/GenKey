@@ -33,19 +33,19 @@ jobs:
       - name: Prepare installable debug APK and checksums
         run: |
           mkdir -p artifacts
-          cp app/build/outputs/apk/debug/app-debug.apk artifacts/GenKey-v3.0-debug.apk
+          cp app/build/outputs/apk/debug/app-debug.apk artifacts/GenKey-v3.0.1-debug.apk
           sha256sum artifacts/*.apk > artifacts/SHA256SUMS.txt
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: GenKey-v3.0-Debug-APK
+          name: GenKey-v3.0.1-Debug-APK
           path: artifacts/
           if-no-files-found: error
           retention-days: 30
       - name: Upload unsigned release for signing
         uses: actions/upload-artifact@v4
         with:
-          name: GenKey-v3.0-Release-UNSIGNED
+          name: GenKey-v3.0.1-Release-UNSIGNED
           path: app/build/outputs/apk/release/app-release-unsigned.apk
           if-no-files-found: error
       - name: Upload test and lint reports

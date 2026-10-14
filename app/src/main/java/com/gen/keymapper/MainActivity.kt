@@ -32,7 +32,7 @@ class MainActivity : Activity() {
     private var tab = 0
     private val poll = object : Runnable {
         override fun run() {
-            val signature = "${ShizukuBridge.isReady()}|${ShizukuBridge.error}|${MapperService.instance?.inputStatus}|${android.view.InputDevice.getDeviceIds().joinToString()}"
+            val signature = "${ShizukuBridge.status}|${ShizukuBridge.error}|${MapperService.instance?.inputStatus}|${android.view.InputDevice.getDeviceIds().joinToString()}"
             if (signature != statusSignature) { statusSignature = signature; draw() }
             main.postDelayed(this, 1000)
         }
@@ -49,7 +49,7 @@ class MainActivity : Activity() {
         window.statusBarColor = bg
         window.navigationBarColor = bg
         store = MappingStore(this)
-        ShizukuBridge.initialize(this)
+        ShizukuBridge.initialize()
         scroll = ScrollView(this).apply { isFillViewport = true; isVerticalScrollBarEnabled = false }
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -70,7 +70,7 @@ class MainActivity : Activity() {
         setContentView(scroll)
         scroll.requestApplyInsets()
     }
-    override fun onResume() { super.onResume(); MapperService.instance?.suspendForDashboard(); store.load(); draw(); main.post(poll) }
+    override fun onResume() { super.onResume(); ShizukuBridge.refresh(); MapperService.instance?.suspendForDashboard(); store.load(); draw(); main.post(poll) }
     override fun onPause() { main.removeCallbacks(poll); super.onPause() }
     override fun onDestroy() { main.removeCallbacksAndMessages(null); super.onDestroy() }
     override fun onConfigurationChanged(config: android.content.res.Configuration) { super.onConfigurationChanged(config); draw() }
@@ -126,12 +126,24 @@ class MainActivity : Activity() {
             setPadding(dp(10), dp(7), dp(10), dp(7))
         }
 
+    private fun showConnectionDetails() {
+        val details = "GenKey ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})\n" +
+            "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})\n" +
+            "${ShizukuBridge.status}\n${ShizukuBridge.diagnostics}"
+        AlertDialog.Builder(this).setTitle("Detail koneksi Shizuku").setMessage(details)
+            .setPositiveButton("Salin detail") { _, _ ->
+                getSystemService(android.content.ClipboardManager::class.java)
+                    .setPrimaryClip(android.content.ClipData.newPlainText("Koneksi GenKey", details))
+                toast("Detail koneksi disalin")
+            }.setNegativeButton("Tutup", null).show()
+    }
+
     private fun draw() {
         val scrollY = scroll.scrollY
         root.removeAllViews()
         val horizontal = maxOf(dp(18), (resources.displayMetrics.widthPixels - dp(760)) / 2)
         root.setPadding(horizontal, dp(20), horizontal, dp(32))
-        root.addView(bar(text("GENKEY", 16f, cyan, true), text("3.0  /  CONTROL STUDIO", 10f, muted)))
+        root.addView(bar(text("GENKEY", 16f, cyan, true), text("${BuildConfig.VERSION_NAME}  /  CONTROL STUDIO", 10f, muted)))
         root.addView(space(8))
         root.addView(text("Kontrolmu. Permainanmu.", 26f, Color.WHITE, true))
         root.addView(text("Kontrol keyboard & mouse untuk game Android", 13f, muted))
@@ -153,7 +165,7 @@ class MainActivity : Activity() {
         hero.addView(text(MapperService.instance?.inputStatus ?: "Buat profil, susun kontrol, lalu buka game.", 12f, Color.rgb(198, 202, 235)))
         hero.addView(space(15))
         val chips = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        chips.addView(status("Shizuku", ShizukuBridge.isReady()))
+        chips.addView(status(if (ShizukuBridge.isReady()) "Input siap" else "Input belum siap", ShizukuBridge.isReady()))
         chips.addView(View(this), LinearLayout.LayoutParams(dp(8), 1))
         chips.addView(status("Overlay", Settings.canDrawOverlays(this)))
         hero.addView(chips)
@@ -181,17 +193,25 @@ class MainActivity : Activity() {
         val reason = when {
             !ShizukuBridge.isRunning() -> "Belum berjalan — nyalakan Shizuku melalui Wireless debugging."
             !ShizukuBridge.hasPermission() -> "Shizuku ditemukan — berikan akses untuk mengirim gesture."
-            !ShizukuBridge.isReady() -> "Izin sudah ada — UserService sedang menghubungkan backend."
+            ShizukuBridge.isConnecting -> "Izin sudah ada — sedang memeriksa layanan input Android."
+            !ShizukuBridge.isReady() -> "Izin Shizuku aktif. Backend input belum siap; tekan Coba lagi."
             else -> "Backend siap. Jalankan Uji input untuk memeriksa penerimaan sentuhan."
         }
         setup.addView(space(5)); setup.addView(text(reason, 12f, muted))
-        setup.addView(space(10)); setup.addView(action("Hubungkan Shizuku") {
+        val connectLabel = when {
+            ShizukuBridge.isConnecting -> "Sedang menghubungkan…"
+            ShizukuBridge.isReady() -> "✓  Shizuku terhubung"
+            ShizukuBridge.hasPermission() -> "Coba lagi"
+            else -> "Hubungkan Shizuku"
+        }
+        setup.addView(space(10)); setup.addView(action(connectLabel) {
             if (!ShizukuBridge.isRunning()) {
                 packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")?.let { startActivity(it) }
                     ?: toast("Pasang dan mulai aplikasi Shizuku dahulu")
             } else ShizukuBridge.requestPermission()
-            main.postDelayed({ draw() }, 1300)
-        })
+            draw()
+        }.apply { isEnabled = !ShizukuBridge.isConnecting && !ShizukuBridge.isReady() })
+        setup.addView(space(8)); setup.addView(action("Detail koneksi") { showConnectionDetails() })
         setup.addView(space(15))
         setup.addView(text("02   OVERLAY", 12f, cyan, true))
         setup.addView(space(5)); setup.addView(text("Diizinkan tampil di atas game agar kontrol bisa digeser langsung.", 12f, muted))
