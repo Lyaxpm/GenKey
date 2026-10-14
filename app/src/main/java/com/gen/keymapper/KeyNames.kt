@@ -13,6 +13,8 @@ object KeyNames {
 
     const val WHEEL_UP = -1001
     const val WHEEL_DOWN = -1002
+    const val WHEEL_LEFT = -1003
+    const val WHEEL_RIGHT = -1004
 
     const val MOUSE_LEFT = -2001
     const val MOUSE_RIGHT = -2002
@@ -21,7 +23,7 @@ object KeyNames {
     const val MOUSE_FORWARD = -2005
 
     fun isMouseButton(code: Int) = code in MOUSE_FORWARD..MOUSE_LEFT
-    fun isWheel(code: Int) = code == WHEEL_UP || code == WHEEL_DOWN
+    fun isWheel(code: Int) = code in WHEEL_RIGHT..WHEEL_UP
     fun isKeyboard(code: Int) = code >= 0
 
     /** MotionEvent.BUTTON_* -> kode kita. */
@@ -48,6 +50,8 @@ object KeyNames {
             NONE -> return "—"
             WHEEL_UP -> return "Wheel↑"
             WHEEL_DOWN -> return "Wheel↓"
+            WHEEL_LEFT -> return "Wheel←"
+            WHEEL_RIGHT -> return "Wheel→"
             MOUSE_LEFT -> return "M-Kiri"
             MOUSE_RIGHT -> return "M-Kanan"
             MOUSE_MIDDLE -> return "M-Tengah"
@@ -116,7 +120,12 @@ object KeyNames {
     fun describe(code: Int): String = when {
         code == NONE -> "belum diatur"
         isMouseButton(code) -> "Mouse ${label(code).removePrefix("M-")}"
-        isWheel(code) -> "Scroll ${if (code == WHEEL_UP) "atas" else "bawah"}"
+        isWheel(code) -> when (code) {
+            WHEEL_UP -> "Scroll atas"
+            WHEEL_DOWN -> "Scroll bawah"
+            WHEEL_LEFT -> "Scroll kiri"
+            else -> "Scroll kanan"
+        }
         else -> "Tombol ${label(code)}"
     }
 

@@ -18,7 +18,7 @@ class Geo(val w: Int, val h: Int, val ox: Int, val oy: Int) {
 
 /**
  * Mesin pemetaan. Semua dipanggil dari main thread: menerima tombol/mouse,
- * lalu mengirim perintah jari virtual ke ShizukuBridge.
+ * lalu mengirim perintah jari virtual ke Backend.
  */
 /** Pengaturan yang dibaca engine. Diimplementasikan oleh MappingStore. */
 interface EngineSettings {
@@ -36,11 +36,11 @@ interface PointerOut {
 
 object ShizukuOut : PointerOut {
     override fun pointer(token: Int, action: Int, x: Float, y: Float) {
-        ShizukuBridge.pointer(token, action, x, y)
+        Backend.pointer(token, action, x, y)
     }
 
     override fun releaseAll() {
-        ShizukuBridge.releaseAll()
+        Backend.releaseAll()
     }
 }
 
@@ -120,6 +120,7 @@ class InputEngine(
     /** Lepas semua jari dan hentikan semua timer (jeda, edit, atau berhenti). */
     fun releaseAll() {
         handler.removeCallbacksAndMessages(null)
+        wheelReleases.clear()
         bRt.clear()
         joyRt.clear()
         camRt.down = false
@@ -209,12 +210,23 @@ class InputEngine(
         return consumed
     }
 
-    fun onWheel(v: Float) {
-        if (v == 0f) return
-        val code = if (v > 0f) KeyNames.WHEEL_UP else KeyNames.WHEEL_DOWN
-        if (trigger(code, true)) {
-            handler.postDelayed({ trigger(code, false) }, max(40, store.tapMs).toLong())
+    private val wheelReleases = HashMap<Int, Runnable>()
+
+    fun onWheel(v: Float, h: Float = 0f) {
+        fun pulse(value: Float, positive: Int, negative: Int) {
+            if (value == 0f) return
+            val code = if (value > 0f) positive else negative
+            wheelReleases.remove(code)?.let { handler.removeCallbacks(it) }
+            // A new wheel event must not be swallowed by the previous held pulse.
+            trigger(code, false)
+            if (trigger(code, true)) {
+                val release = Runnable { trigger(code, false); wheelReleases.remove(code) }
+                wheelReleases[code] = release
+                handler.postDelayed(release, store.tapMs.coerceAtLeast(16).toLong())
+            }
         }
+        pulse(v, KeyNames.WHEEL_UP, KeyNames.WHEEL_DOWN)
+        pulse(h, KeyNames.WHEEL_RIGHT, KeyNames.WHEEL_LEFT)
     }
 
     fun onMouseMove(dx: Float, dy: Float) {
