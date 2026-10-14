@@ -6,7 +6,13 @@ Status awal: belum diuji di perangkat fisik oleh lingkungan pengembangan. Catat 
 |---|---|
 | Install debug APK baru | Dashboard terbuka, inset status/nav tidak menutup isi |
 | Shizuku mati/izin ditolak | Penjelasan yang sesuai, tidak menampilkan input siap |
-| Hubungkan Shizuku | Backend siap setelah UserService berhasil ping |
+| Hubungkan Shizuku | Backend siap setelah panggilan Binder input dan pemeriksaan izin injeksi berhasil |
+| Izin sudah aktif sebelum app dibuka | Otomatis tersambung tanpa dialog izin ulang atau menunggu UserService |
+| Berikan izin dari manager lalu kembali ke GenKey | Status diperbarui dan backend dihubungkan |
+| Ketuk koneksi berulang kali | Satu percobaan berjalan; tidak ada timeout dari percobaan lama |
+| Matikan lalu mulai kembali Shizuku | Status terputus lalu tersambung dengan Binder baru; input lama tidak diputar ulang |
+| Koneksi gagal lalu Coba lagi | Pesan lama dibersihkan dan percobaan baru bisa berjalan |
+| Detail koneksi | Bisa menyalin model/Android, versi, status, dan kesalahan aktual |
 | Tes tap | LULUS dan event DOWN/UP diterima layar tes |
 | Tes dua jari | LULUS dan maksimum 2 pointer diterima layar tes |
 | Izin overlay belum diberi | Alur menuju izin, tidak crash |
@@ -26,7 +32,8 @@ Status awal: belum diuji di perangkat fisik oleh lingkungan pengembangan. Catat 
 | Fokus game berubah | Status fokus hilang; tidak ada pointer tertahan |
 | Cabut keyboard/mouse/gamepad | Semua input dilepas |
 | Shizuku dimatikan / layar dikunci | Input dilepas, tidak ada turbo tertinggal |
-| Matikan proses app saat hold | Watchdog shell membatalkan input setelah >3 detik |
+| Heartbeat berhenti, proses tetap hidup | Watchdog membatalkan input setelah >3 detik |
+| Matikan proses app saat hold | Catat perilaku ROM; watchdog dalam proses tidak berjalan setelah proses mati |
 | Gamepad analog | Dead zone bekerja, stick kiri menggerakkan joystick pertama |
 | Export → import | Profil/aksi/interval tetap sama |
 | Impor file invalid/duplikat/terlalu besar | Ditolak tanpa menimpa profil sebelumnya |

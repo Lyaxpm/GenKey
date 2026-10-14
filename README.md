@@ -1,4 +1,4 @@
-# GenKey 3.0
+# GenKey 3.0.1
 
 Keymapper Android dengan Shizuku dan editor overlay. Tidak memerlukan Accessibility, root, akun, atau langganan. Minimum Android 8 (API 26), target Android 15 (API 35). Shizuku melalui wireless debugging memerlukan Android 11+; versi lebih lama memerlukan aktivasi ADB dari komputer.
 
@@ -13,9 +13,15 @@ GenKey dikembangkan secara independen. [KeySync](https://github.com/aka-munan/ke
 - Beberapa kontrol dapat memakai tombol yang sama untuk menekan beberapa titik sekaligus (maksimal 10 pointer pada backend).
 - Analog kiri gamepad menggerakkan joystick pertama jika opsi gamepad diaktifkan. Tombol gamepad bisa direkam seperti keyboard.
 - Mouse relatif menggunakan `requestPointerCapture()` dan callback `onCapturedPointerEvent`; tidak ada layer mouse fullscreen yang menelan sentuhan game.
-- Backend shell memakai satu event loop terjadwal: tap dan swipe tidak menahan Binder atau mengantrekan seluruh gesture secara serial. Kamera memakai pointer berkelanjutan dengan recenter.
-- Input dilepas saat fokus hilang, perangkat dicabut, rotasi, layar mati, berganti profil, pause, atau sesi berhenti. Watchdog shell membatalkan sentuhan ketika heartbeat berhenti selama >3 detik.
+- Backend memakai Binder Shizuku langsung dengan satu event loop terjadwal: tap dan swipe tidak menahan Binder atau mengantrekan seluruh gesture secara serial. Kamera memakai pointer berkelanjutan dengan recenter.
+- Input dilepas saat fokus hilang, perangkat dicabut, rotasi, layar mati, berganti profil, pause, atau sesi berhenti. Watchdog dalam proses GenKey membatalkan sentuhan ketika heartbeat berhenti selama >3 detik, selama proses masih hidup.
 - Diagnostik penerimaan injeksi serta layar uji yang menghitung MotionEvent dan multitouch yang benar-benar diterima.
+
+## Perbaikan koneksi 3.0.1
+
+Versi sebelumnya dapat berhenti di timeout UserService meskipun izin Shizuku sudah aktif. Versi ini mengirim injeksi melalui `ShizukuBinderWrapper` langsung, tanpa menunggu proses UserService. Sebelum status siap, GenKey memeriksa izin injeksi shell dan melakukan panggilan baca ke layanan input. Akses API internal Android 9+ memakai HiddenApiBypass 6.1 dengan pengecualian terbatas pada kelas input dan ServiceManager.
+
+Percobaan koneksi mempunyai ID sesi: timeout atau respons dari sesi lama tidak boleh menimpa sesi baru. Izin yang diberikan dari aplikasi Shizuku diperiksa lagi saat kembali ke GenKey. Penolakan injeksi mengubah status menjadi gagal dan bisa dicoba kembali. **Persiapan → Detail koneksi → Salin detail** menyediakan model/Android, status, dan pesan kegagalan untuk laporan bug.
 
 ## Cara menggunakan
 
@@ -36,8 +42,8 @@ Workflow **Build GenKey Android APK** berjalan pada push, pull request, dan `wor
 
 1. Buka **Actions → Build GenKey Android APK → Run workflow**.
 2. Workflow menjalankan unit test, Android Lint, build debug, serta build release.
-3. Setelah sukses, unduh **GenKey-v3.0-Debug-APK**. Ekstrak ZIP artifact dan install `GenKey-v3.0-debug.apk`.
-4. Artifact **GenKey-v3.0-Release-UNSIGNED** memerlukan penandatanganan sebelum bisa dipasang. Tidak diperlukan secret untuk build debug atau release unsigned.
+3. Setelah sukses, unduh **GenKey-v3.0.1-Debug-APK**. Ekstrak ZIP artifact dan install `GenKey-v3.0.1-debug.apk`.
+4. Artifact **GenKey-v3.0.1-Release-UNSIGNED** memerlukan penandatanganan sebelum bisa dipasang. Tidak diperlukan secret untuk build debug atau release unsigned.
 5. **GenKey-validation-reports** memuat laporan test/lint. SHA-256 APK debug tersedia di artifact APK.
 
 Build memakai JDK 17, Gradle Wrapper 8.11.1 dengan checksum distribusi, AGP 8.9.2, Kotlin 2.1.20, SDK/build-tools 35. Tidak memakai Gradle global.
@@ -54,6 +60,7 @@ Set `ANDROID_HOME` atau `sdk.dir` di `local.properties`. File konfigurasi SDK lo
 - Keyboard dan gamepad ditangkap melalui jendela overlay yang memiliki fokus, **bukan listener input global/native evdev**. Menyentuh game atau kebijakan firmware dapat memindahkan fokus. GEN → Fokus keyboard tersedia untuk mengambilnya kembali.
 - Pointer capture baru berstatus aktif setelah callback Android menyatakan berhasil. ROM yang menolak capture pada overlay akan menampilkan pesan gagal. Belum ada jaminan kompatibilitas mouse untuk seluruh firmware.
 - `injectInputEvent` adalah API internal Android. Izin shell, implementasi vendor, atau kebijakan game bisa menolak injeksi. Penghitung “Diterima” berarti InputManager menerima permintaan; layar uji dan pengujian game tetap diperlukan.
+- Watchdog berada dalam proses GenKey; force-stop/kematian proses tidak dapat menjamin pengiriman CANCEL. Hentikan sesi sebelum menutup paksa aplikasi.
 - Tidak ada deteksi game foreground otomatis. Pilih profil yang benar secara manual. Hindari multi-window; mapping memakai koordinat layar utama penuh.
 - Tidak ada macro recorder, cloud sync, auto-switch profil, atau mouse capture native tanpa fokus. Fitur tersebut tidak ditampilkan sebagai fitur aktif.
 - Shizuku perlu diaktifkan kembali setelah reboot. Game dapat membatasi overlay/input sintetis.
@@ -68,7 +75,9 @@ Set `ANDROID_HOME` atau `sdk.dir` di `local.properties`. File konfigurasi SDK lo
 | `PlayOverlay.kt` | Bubble, fokus keyboard, relative pointer capture, preview |
 | `MapperService.kt` | Routing input, kombinasi kontrol, lifecycle sesi |
 | `ShizukuBridge.kt` | Koneksi shell, izin, IPC dan diagnostik |
-| `ShellInputService.kt` | Event loop injeksi multitouch dan watchdog |
+| `DirectInputInjector.kt` | Akses IInputManager melalui Binder Shizuku yang telah diizinkan |
+| `TouchEngine.kt` | Event loop injeksi multitouch dan watchdog dalam proses app |
+| `ConnectionAttempt.kt` | Penanganan percobaan koneksi dan respons terlambat |
 | `TouchState.kt` | Pointer ID/index dan vektor joystick yang diuji unit |
 | `ProfileCodec.kt` / `MappingStore.kt` | Validasi JSON dan penyimpanan atomik |
 | `ScreenSpace.kt` | Koordinat layar yang sama untuk editor/input |
