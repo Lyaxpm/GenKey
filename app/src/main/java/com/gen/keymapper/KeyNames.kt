@@ -1,32 +1,64 @@
 package com.gen.keymapper
 
 import android.view.KeyEvent
+import android.view.MotionEvent
 
-/** Label pendek untuk keycode, dipakai di chip editor. */
+/**
+ * Satu ruang kode untuk semua pemicu:
+ *  - kode >= 0 : KeyEvent.KEYCODE_* (keyboard / gamepad)
+ *  - kode < 0  : tombol mouse atau scroll wheel (didefinisikan di sini)
+ */
 object KeyNames {
-    const val MOUSE_SCROLL_UP = -1001
-    const val MOUSE_SCROLL_DOWN = -1002
-    fun label(keyCode: Int): String {
-        if (keyCode == MOUSE_SCROLL_UP) return "Wheel+"
-        if (keyCode == MOUSE_SCROLL_DOWN) return "Wheel-"
-        if (keyCode < 0) return "?"
-        // A-Z
-        if (keyCode in KeyEvent.KEYCODE_A..KeyEvent.KEYCODE_Z) {
-            return ('A' + (keyCode - KeyEvent.KEYCODE_A)).toString()
+    const val NONE = -1
+
+    const val WHEEL_UP = -1001
+    const val WHEEL_DOWN = -1002
+
+    const val MOUSE_LEFT = -2001
+    const val MOUSE_RIGHT = -2002
+    const val MOUSE_MIDDLE = -2003
+    const val MOUSE_BACK = -2004
+    const val MOUSE_FORWARD = -2005
+
+    fun isMouseButton(code: Int) = code in MOUSE_FORWARD..MOUSE_LEFT
+    fun isWheel(code: Int) = code == WHEEL_UP || code == WHEEL_DOWN
+    fun isKeyboard(code: Int) = code >= 0
+
+    /** MotionEvent.BUTTON_* -> kode kita. */
+    fun fromActionButton(button: Int): Int = when (button) {
+        MotionEvent.BUTTON_PRIMARY -> MOUSE_LEFT
+        MotionEvent.BUTTON_SECONDARY -> MOUSE_RIGHT
+        MotionEvent.BUTTON_TERTIARY -> MOUSE_MIDDLE
+        MotionEvent.BUTTON_BACK -> MOUSE_BACK
+        MotionEvent.BUTTON_FORWARD -> MOUSE_FORWARD
+        else -> NONE
+    }
+
+    /** Tombol yang tidak boleh dipetakan / dikonsumsi (dibiarkan untuk sistem). */
+    fun isSystemKey(code: Int): Boolean = when (code) {
+        KeyEvent.KEYCODE_HOME, KeyEvent.KEYCODE_APP_SWITCH, KeyEvent.KEYCODE_POWER,
+        KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.KEYCODE_VOLUME_MUTE,
+        KeyEvent.KEYCODE_SLEEP, KeyEvent.KEYCODE_WAKEUP, KeyEvent.KEYCODE_CAMERA,
+        KeyEvent.KEYCODE_ASSIST, KeyEvent.KEYCODE_SYSRQ -> true
+        else -> false
+    }
+
+    fun label(code: Int): String {
+        when (code) {
+            NONE -> return "—"
+            WHEEL_UP -> return "Wheel↑"
+            WHEEL_DOWN -> return "Wheel↓"
+            MOUSE_LEFT -> return "M-Kiri"
+            MOUSE_RIGHT -> return "M-Kanan"
+            MOUSE_MIDDLE -> return "M-Tengah"
+            MOUSE_BACK -> return "M-Back"
+            MOUSE_FORWARD -> return "M-Fwd"
         }
-        // 0-9
-        if (keyCode in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9) {
-            return ('0' + (keyCode - KeyEvent.KEYCODE_0)).toString()
-        }
-        // F1-F12
-        if (keyCode in KeyEvent.KEYCODE_F1..KeyEvent.KEYCODE_F12) {
-            return "F" + (keyCode - KeyEvent.KEYCODE_F1 + 1)
-        }
-        // Tombol mouse
-        if (keyCode in KeyEvent.KEYCODE_BUTTON_1..KeyEvent.KEYCODE_BUTTON_16) {
-            return "M" + (keyCode - KeyEvent.KEYCODE_BUTTON_1 + 1)
-        }
-        return when (keyCode) {
+        if (code < 0) return "?"
+        if (code in KeyEvent.KEYCODE_A..KeyEvent.KEYCODE_Z) return ('A' + (code - KeyEvent.KEYCODE_A)).toString()
+        if (code in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9) return ('0' + (code - KeyEvent.KEYCODE_0)).toString()
+        if (code in KeyEvent.KEYCODE_F1..KeyEvent.KEYCODE_F12) return "F" + (code - KeyEvent.KEYCODE_F1 + 1)
+        return when (code) {
             KeyEvent.KEYCODE_SPACE -> "Spasi"
             KeyEvent.KEYCODE_ENTER -> "Enter"
             KeyEvent.KEYCODE_TAB -> "Tab"
@@ -46,19 +78,6 @@ object KeyNames {
             KeyEvent.KEYCODE_DPAD_DOWN -> "▼"
             KeyEvent.KEYCODE_DPAD_LEFT -> "◀"
             KeyEvent.KEYCODE_DPAD_RIGHT -> "▶"
-            KeyEvent.KEYCODE_DPAD_CENTER -> "OK"
-            KeyEvent.KEYCODE_BUTTON_A -> "A🎮"
-            KeyEvent.KEYCODE_BUTTON_B -> "B🎮"
-            KeyEvent.KEYCODE_BUTTON_X -> "X🎮"
-            KeyEvent.KEYCODE_BUTTON_Y -> "Y🎮"
-            KeyEvent.KEYCODE_BUTTON_L1 -> "L1"
-            KeyEvent.KEYCODE_BUTTON_R1 -> "R1"
-            KeyEvent.KEYCODE_BUTTON_L2 -> "L2"
-            KeyEvent.KEYCODE_BUTTON_R2 -> "R2"
-            KeyEvent.KEYCODE_BUTTON_START -> "Start"
-            KeyEvent.KEYCODE_BUTTON_SELECT -> "Select"
-            KeyEvent.KEYCODE_BUTTON_THUMBL -> "L3"
-            KeyEvent.KEYCODE_BUTTON_THUMBR -> "R3"
             KeyEvent.KEYCODE_GRAVE -> "`"
             KeyEvent.KEYCODE_MINUS -> "-"
             KeyEvent.KEYCODE_EQUALS -> "="
@@ -75,19 +94,51 @@ object KeyNames {
             KeyEvent.KEYCODE_MOVE_HOME -> "Home"
             KeyEvent.KEYCODE_MOVE_END -> "End"
             KeyEvent.KEYCODE_INSERT -> "Ins"
-            else -> "K$keyCode"
+            KeyEvent.KEYCODE_BREAK -> "Pause"
+            KeyEvent.KEYCODE_BUTTON_A -> "Pad-A"
+            KeyEvent.KEYCODE_BUTTON_B -> "Pad-B"
+            KeyEvent.KEYCODE_BUTTON_X -> "Pad-X"
+            KeyEvent.KEYCODE_BUTTON_Y -> "Pad-Y"
+            KeyEvent.KEYCODE_BUTTON_L1 -> "L1"
+            KeyEvent.KEYCODE_BUTTON_R1 -> "R1"
+            KeyEvent.KEYCODE_BUTTON_L2 -> "L2"
+            KeyEvent.KEYCODE_BUTTON_R2 -> "R2"
+            KeyEvent.KEYCODE_BUTTON_START -> "Start"
+            KeyEvent.KEYCODE_BUTTON_SELECT -> "Select"
+            KeyEvent.KEYCODE_BUTTON_THUMBL -> "L3"
+            KeyEvent.KEYCODE_BUTTON_THUMBR -> "R3"
+            else -> KeyEvent.keyCodeToString(code).removePrefix("KEYCODE_").lowercase()
+                .replaceFirstChar { it.uppercase() }
         }
     }
 
-    /** Label panjang untuk daftar. */
-    fun describe(keyCode: Int): String {
-        val l = label(keyCode)
-        return when {
-            keyCode in KeyEvent.KEYCODE_BUTTON_1..KeyEvent.KEYCODE_BUTTON_16 ->
-                "Tombol Mouse $l"
-            keyCode in KeyEvent.KEYCODE_BUTTON_A..KeyEvent.KEYCODE_BUTTON_MODE ->
-                "Tombol Gamepad ($l)"
-            else -> "Tombol \"$l\""
-        }
+    /** Label panjang untuk dialog dan daftar. */
+    fun describe(code: Int): String = when {
+        code == NONE -> "belum diatur"
+        isMouseButton(code) -> "Mouse ${label(code).removePrefix("M-")}"
+        isWheel(code) -> "Scroll ${if (code == WHEEL_UP) "atas" else "bawah"}"
+        else -> "Tombol ${label(code)}"
     }
+
+    /** Pilihan tombol cepat di Pengaturan. */
+    val aimKeyChoices: List<Pair<String, Int>> = listOf(
+        "Klik tengah mouse (MMB)" to MOUSE_MIDDLE,
+        "Tombol samping mouse (Back)" to MOUSE_BACK,
+        "Tombol samping mouse (Forward)" to MOUSE_FORWARD,
+        "Caps Lock" to KeyEvent.KEYCODE_CAPS_LOCK,
+        "Tab" to KeyEvent.KEYCODE_TAB,
+        "` (Grave)" to KeyEvent.KEYCODE_GRAVE,
+        "F1" to KeyEvent.KEYCODE_F1,
+        "F2" to KeyEvent.KEYCODE_F2
+    )
+
+    val pauseKeyChoices: List<Pair<String, Int>> = listOf(
+        "F8" to KeyEvent.KEYCODE_F8,
+        "F9" to KeyEvent.KEYCODE_F9,
+        "F10" to KeyEvent.KEYCODE_F10,
+        "F12" to KeyEvent.KEYCODE_F12,
+        "Insert" to KeyEvent.KEYCODE_INSERT,
+        "Pause/Break" to KeyEvent.KEYCODE_BREAK,
+        "Scroll Lock" to KeyEvent.KEYCODE_SCROLL_LOCK
+    )
 }
