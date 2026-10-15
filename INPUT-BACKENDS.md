@@ -1,4 +1,36 @@
-# GenKey 3.1 — layanan input
+# GenKey 3.2 — OTG offline dan editor
+
+Mode **OTG offline · Aksesibilitas** mengirim gesture langsung lewat Android, tanpa
+ADB, Shizuku, socket, Wi-Fi, atau koneksi internet. Pengguna harus mengaktifkan layanan
+Aksesibilitas secara manual. `canRetrieveWindowContent=false`; tidak membaca UI game.
+Backend lama tetap tersedia dan tidak diganti diam-diam.
+
+`GestureQueue` mempertahankan DOWN/UP (termasuk tap singkat dan tekan ulang),
+menggabungkan MOVE berurutan, dan melepas jari secara terpisah. Satu dispatch 32 ms
+membawa seluruh jari; `continueStroke` menyambung jari yang masih ditahan.
+Sentuhan fisik/layanan lain bisa membatalkan gesture. Error terlihat di Diagnosa;
+lepaskan tombol sebelum mencoba lagi. Tidak menjanjikan latensi nol atau kompatibilitas
+kamera FPS yang sama dengan injeksi shell.
+
+Bila HyperOS mematikan ADB ketika Wi-Fi mati, gunakan mode offline. Menyimpan kunci
+pairing tidak membuat daemon ADB tetap hidup. Penyambungan ke endpoint terakhir dicoba
+kembali saat Wireless debugging hidup; port yang berubah masih perlu diperbarui lewat
+Atur koneksi. Kode enam digit tidak perlu diisi ulang selama otorisasi masih berlaku.
+Binder Shizuku yang muncul kembali menghapus status gagal sebelumnya agar bisa bind lagi.
+
+## Verifikasi perangkat versi 3.2
+- Pilih offline; Uji sentuhan; matikan Wi-Fi dan Wireless debugging; uji OTG + kuota.
+- Tahan W+A, gerakkan mouse, klik kiri, lepas salah satu tombol; periksa jari lain tetap aktif.
+- Tap cepat/turbo, tahan-toggle, pause/stop, ganti backend, putar layar; tidak boleh ada jari tersangkut.
+- Cabut OTG ketika tombol ditahan; sambungkan kembali dan mulai input ulang.
+- Cabut izin Aksesibilitas saat aktif; aplikasi harus menunjukkan layanan belum terhubung.
+- Editor: seret chip dengan jari/mouse, pindahkan/lipat toolbar, scroll properti,
+  ubah orientasi, coba kontrol dekat tepi dan di bawah lokasi panel lama, simpan/batal.
+- Uji HyperOS pada HP nyata masih diperlukan. CI tidak menguji injeksi ke game atau ROM.
+
+## Catatan backend 3.1 (tetap berlaku untuk Shizuku/ADB)
+
+
 
 Pilih **Shizuku** atau **Pairing mandiri** di Persiapan. Mengganti mode menghentikan
 mapping; mulai kembali setelah layanan baru terhubung. Tidak membutuhkan Accessibility.

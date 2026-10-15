@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Gen Keymapper</string>
+    <string name="offline_input_description">Mengubah keyboard dan mouse OTG menjadi sentuhan sesuai mapping yang Anda jalankan. Tidak membaca isi layar. Tidak memerlukan Wi-Fi, ADB, Shizuku, atau pairing.</string>
 </resources>

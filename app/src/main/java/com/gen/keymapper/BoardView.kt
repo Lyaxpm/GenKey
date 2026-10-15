@@ -47,6 +47,7 @@ class BoardView(
 
     var onSelect: ((Binding?) -> Unit)? = null
     var onChanged: (() -> Unit)? = null
+    var onDrag: (() -> Unit)? = null
 
     private var cachedGeo: Geo? = null
     private val loc = IntArray(2)
@@ -128,7 +129,7 @@ class BoardView(
         val x = b.x * w
         val y = b.y * h
         val sel = editing && b === selected
-        val r = if (editing) dp(24f) else dp(19f)
+        val r = if (editing) dp(17f) else dp(14f)
         val col = colorFor(b)
 
         if (b.type == Bt.KEY && b.action == Act.SWIPE) {
@@ -158,7 +159,7 @@ class BoardView(
 
         val label = KeyNames.label(b.key)
         txt.color = Ui.withAlpha(Ui.TEXT, if (editing) 1f else alpha.coerceAtLeast(0.5f))
-        var size = dp(if (editing) 13f else 12f)
+        var size = dp(if (editing) 10f else 9f)
         txt.textSize = size
         val maxW = r * 1.65f
         val tw = txt.measureText(label)
@@ -173,7 +174,7 @@ class BoardView(
             c.drawText(label, x, y + dp(11f), txt)
         } else if (editing) {
             c.drawText(label, x, y + size * 0.1f, txt)
-            txt.textSize = dp(8.5f)
+            txt.textSize = dp(6.5f)
             txt.color = Ui.withAlpha(col, 1f)
             c.drawText(Act.label(b.action), x, y + r * 0.62f, txt)
         } else {
@@ -274,7 +275,10 @@ class BoardView(
     }
 
     private fun drawBanner(c: Canvas, text: String, w: Float) {
-        txt.textSize = dp(14f)
+        txt.textSize = dp(11f)
+        val maxText = (w - dp(44f)).coerceAtLeast(dp(20f))
+        val measured = txt.measureText(text)
+        if (measured > maxText) txt.textSize *= maxText / measured
         val tw = txt.measureText(text)
         val x = w / 2f
         val y = dp(34f)
@@ -309,12 +313,11 @@ class BoardView(
             val ey = (s.y + s.dy).coerceIn(0f, 1f) * h
             if (hypot(x - ex, y - ey) <= dp(24f)) return s to true
         }
-        // 2) chip kecil
-        for (i in p.bindings.indices.reversed()) {
-            val b = p.bindings[i]
-            if (b.type != Bt.KEY && b.type != Bt.AIM) continue
-            if (hypot(x - b.x * w, y - b.y * h) <= dp(30f)) return b to false
-        }
+        // Select the nearest chip instead of an overlapping, later-added hit area.
+        p.bindings.filter { it.type == Bt.KEY || it.type == Bt.AIM }
+            .minByOrNull { hypot(x - it.x * w, y - it.y * h) }
+            ?.takeIf { hypot(x - it.x * w, y - it.y * h) <= dp(24f) }
+            ?.let { return it to false }
         // 3) area besar (joystick, kamera)
         for (i in p.bindings.indices.reversed()) {
             val b = p.bindings[i]
@@ -349,7 +352,10 @@ class BoardView(
             }
             MotionEvent.ACTION_MOVE -> {
                 val b = dragging ?: return true
-                if (!moved && hypot(e.x - downX, e.y - downY) > dp(6f)) moved = true
+                if (!moved && hypot(e.x - downX, e.y - downY) > dp(4f)) {
+                    moved = true
+                    onDrag?.invoke()
+                }
                 if (moved) {
                     val fx = ((e.x - offX) / width).coerceIn(0f, 1f)
                     val fy = ((e.y - offY) / height).coerceIn(0f, 1f)
@@ -357,8 +363,9 @@ class BoardView(
                         b.dx = (fx - b.x).coerceIn(-1f, 1f)
                         b.dy = (fy - b.y).coerceIn(-1f, 1f)
                     } else {
-                        b.x = fx
-                        b.y = fy
+                        val radius = if (b.type == Bt.KEY || b.type == Bt.AIM) dp(19f) else b.radius * min(width, height)
+                        b.x = EditorBounds.center(fx * width, radius, width.toFloat()) / width
+                        b.y = EditorBounds.center(fy * height, radius, height.toFloat()) / height
                     }
                     invalidate()
                 }
@@ -369,7 +376,6 @@ class BoardView(
                 if (b != null) {
                     if (moved) {
                         selected = b
-                        onSelect?.invoke(b)
                         onChanged?.invoke()
                     } else {
                         selected = b

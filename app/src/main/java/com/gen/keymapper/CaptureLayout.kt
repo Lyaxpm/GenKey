@@ -23,6 +23,7 @@ class CaptureLayout(ctx: Context) : FrameLayout(ctx) {
     }
 
     var sink: Sink? = null
+    var captureWheel = true
     private var lastTx = 0f
     private var lastTy = 0f
     private var haveLast = false
@@ -70,7 +71,7 @@ class CaptureLayout(ctx: Context) : FrameLayout(ctx) {
     }
 
     override fun onGenericMotionEvent(event: MotionEvent): Boolean {
-        if (event.actionMasked == MotionEvent.ACTION_SCROLL) {
+        if (captureWheel && event.actionMasked == MotionEvent.ACTION_SCROLL) {
             sink?.onWheel(event.getAxisValue(MotionEvent.AXIS_VSCROLL),
                 event.getAxisValue(MotionEvent.AXIS_HSCROLL))
             return sink != null

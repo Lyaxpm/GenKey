@@ -4,7 +4,7 @@ import android.content.Context
 
 /** Single routing point: a mapping session always uses exactly one transport. */
 object Backend {
-    enum class Mode { SHIZUKU, PAIRING }
+    enum class Mode { SHIZUKU, PAIRING, OFFLINE }
     enum class State { NOT_INSTALLED, NOT_RUNNING, NO_PERMISSION, CONNECTING, READY, ERROR }
     const val SHIZUKU_PKG = ShizukuBridge.SHIZUKU_PKG
     private lateinit var app: Context
@@ -12,7 +12,11 @@ object Backend {
     var mode = Mode.SHIZUKU
         private set
     var listener: (() -> Unit)? = null
-    val error: String get() = if (mode == Mode.SHIZUKU) ShizukuBridge.error else AdbBackend.message
+    val error: String get() = when (mode) {
+        Mode.SHIZUKU -> ShizukuBridge.error
+        Mode.PAIRING -> AdbBackend.message
+        Mode.OFFLINE -> OfflineInputService.instance?.lastError ?: "Aktifkan layanan GenKey di Pengaturan Aksesibilitas."
+    }
     fun initialize(context: Context) {
         if (initialized) return
         app = context.applicationContext
@@ -26,6 +30,7 @@ object Backend {
     fun select(value: Mode) {
         if (mode == value) return
         // Stop mapping before switching to avoid carrying held state across transports.
+        releaseAll()
         app.stopService(android.content.Intent(app, MapperService::class.java))
         ShizukuBridge.disconnect()
         AdbBackend.disconnect()
@@ -34,15 +39,41 @@ object Backend {
         connect()
         listener?.invoke()
     }
-    fun state(): State = if (mode == Mode.SHIZUKU) State.valueOf(ShizukuBridge.state().name)
-        else if (AdbBackend.ready) State.READY else if (AdbBackend.busy) State.CONNECTING else State.ERROR
-    fun isReady() = if (mode == Mode.SHIZUKU) ShizukuBridge.isReady() else AdbBackend.ready
-    fun connect() { if (mode == Mode.SHIZUKU) ShizukuBridge.connect() }
-    fun reconnect() { if (mode == Mode.SHIZUKU) ShizukuBridge.reconnect() }
+    fun state(): State = when (mode) {
+        Mode.SHIZUKU -> State.valueOf(ShizukuBridge.state().name)
+        Mode.PAIRING -> if (AdbBackend.ready) State.READY else if (AdbBackend.busy) State.CONNECTING else State.ERROR
+        Mode.OFFLINE -> if (OfflineInputService.instance != null) State.READY else State.NO_PERMISSION
+    }
+    fun isReady() = state() == State.READY
+    fun connect() { when (mode) {
+        Mode.SHIZUKU -> ShizukuBridge.connect()
+        Mode.PAIRING -> AdbBackend.connectSaved()
+        Mode.OFFLINE -> Unit
+    } }
+    fun reconnect() { when (mode) {
+        Mode.SHIZUKU -> ShizukuBridge.reconnect()
+        Mode.PAIRING -> AdbBackend.connectSaved(force = true)
+        Mode.OFFLINE -> listener?.invoke()
+    } }
     fun requestPermission() { if (mode == Mode.SHIZUKU) ShizukuBridge.requestPermission() }
-    fun pointer(token: Int, action: Int, x: Float, y: Float): Boolean =
-        if (mode == Mode.SHIZUKU) ShizukuBridge.pointer(token, action, x, y) else AdbBackend.pointer(token, action, x, y)
-    fun releaseAll() { if (mode == Mode.SHIZUKU) ShizukuBridge.releaseAll() else AdbBackend.releaseAll() }
-    fun key(code: Int) { if (mode == Mode.SHIZUKU) ShizukuBridge.key(code) else AdbBackend.key(code) }
-    fun diagBlocking(): String? = if (mode == Mode.SHIZUKU) ShizukuBridge.diagBlocking() else AdbBackend.diagBlocking()
+    fun pointer(token: Int, action: Int, x: Float, y: Float): Boolean = when (mode) {
+        Mode.SHIZUKU -> ShizukuBridge.pointer(token, action, x, y)
+        Mode.PAIRING -> AdbBackend.pointer(token, action, x, y)
+        Mode.OFFLINE -> OfflineInputService.instance?.pointer(token, action, x, y) ?: false
+    }
+    fun releaseAll() { when (mode) {
+        Mode.SHIZUKU -> ShizukuBridge.releaseAll()
+        Mode.PAIRING -> AdbBackend.releaseAll()
+        Mode.OFFLINE -> OfflineInputService.instance?.releaseAll()
+    } }
+    fun key(code: Int) { when (mode) {
+        Mode.SHIZUKU -> ShizukuBridge.key(code)
+        Mode.PAIRING -> AdbBackend.key(code)
+        Mode.OFFLINE -> OfflineInputService.instance?.key(code)
+    } }
+    fun diagBlocking(): String? = when (mode) {
+        Mode.SHIZUKU -> ShizukuBridge.diagBlocking()
+        Mode.PAIRING -> AdbBackend.diagBlocking()
+        Mode.OFFLINE -> OfflineInputService.instance?.diag() ?: error
+    }
 }

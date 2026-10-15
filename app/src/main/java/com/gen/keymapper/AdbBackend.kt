@@ -45,6 +45,24 @@ object AdbBackend {
         changed()
     }
 
+    private var lastAutoAttempt = 0L
+    fun connectSaved(force: Boolean = false) {
+        if (ready || busy) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (!force && now - lastAutoAttempt < 30_000) return
+        val prefs = app.getSharedPreferences("backend", 0)
+        val port = prefs.getInt("port", 0)
+        val host = prefs.getString("host", null) ?: return
+        if (port !in 1..65535) return
+        // A stopped wireless daemon cannot be recovered by re-pairing or by the app.
+        if (android.provider.Settings.Global.getInt(app.contentResolver, "adb_wifi_enabled", 0) == 0) {
+            message = "Wireless debugging mati. Untuk OTG + kuota pilih OTG offline (Aksesibilitas)."
+            return
+        }
+        lastAutoAttempt = now
+        start(host, null, "", port, false)
+    }
+
     fun start(host: String, pairingPort: Int?, code: String, connectPort: Int, pair: Boolean) {
         if (busy) return
         if (Build.VERSION.SDK_INT < 30) { message = "Pairing mandiri membutuhkan Android 11+."; changed(); return }
@@ -94,7 +112,7 @@ object AdbBackend {
                         s.ended = true
                         s.replies.offer("GENKEY_ERROR Layanan ADB terputus")
                         main.post { if (session === s && ready) {
-                            disconnect(); message = "Layanan ADB terputus. Hubungkan ulang."; changed()
+                            disconnect(); message = "ADB terputus. Jika Wi-Fi dimatikan, pilih OTG offline; pairing tersimpan."; changed()
                         } }
                     }
                 }

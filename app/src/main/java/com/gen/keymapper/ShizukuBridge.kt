@@ -34,7 +34,7 @@ object ShizukuBridge {
         if (initialized) return
         app = context.applicationContext
         initialized = true
-        Shizuku.addBinderReceivedListenerSticky { main.post { if (Backend.mode == Backend.Mode.SHIZUKU) connect(); changed() } }
+        Shizuku.addBinderReceivedListenerSticky { main.post { if (Backend.mode == Backend.Mode.SHIZUKU) { error = ""; connect() }; changed() } }
         Shizuku.addBinderDeadListener { main.post { disconnect(); changed() } }
         Shizuku.addRequestPermissionResultListener { request, result ->
             if (request == REQUEST_CODE) main.post {
@@ -107,7 +107,7 @@ object ShizukuBridge {
         runCatching { Shizuku.bindUserService(serviceArgs, conn) }
             .onFailure { fail(it.message ?: it.toString()) }
         main.postDelayed({
-            if (generation == attempt && binding) fail("Layanan input tidak menjawab dalam 12 detik. Coba lagi atau pilih Pairing mandiri.")
+            if (generation == attempt && binding) fail("Layanan input tidak menjawab dalam 12 detik. Periksa Shizuku dan USB debugging (Setelan keamanan). Untuk tanpa Wi-Fi pilih OTG offline.")
         }, 12_000)
         changed()
     }

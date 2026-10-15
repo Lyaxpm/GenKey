@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.hardware.input.InputManager
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
@@ -63,6 +64,12 @@ class MapperService : Service(), CaptureLayout.Sink, InputEngine.Host, EditorUi.
     private var editSnapshot: String? = null
     private var currentPkg = ""
 
+    private val deviceListener = object : InputManager.InputDeviceListener {
+        override fun onInputDeviceAdded(deviceId: Int) = Unit
+        override fun onInputDeviceChanged(deviceId: Int) { engine.releaseAll() }
+        override fun onInputDeviceRemoved(deviceId: Int) { engine.releaseAll() }
+    }
+
     private fun dp(v: Int) = Ui.dp(this, v)
 
     // ---------- siklus hidup ----------
@@ -75,6 +82,7 @@ class MapperService : Service(), CaptureLayout.Sink, InputEngine.Host, EditorUi.
         store = MappingStore(this)
         store.load()
         engine = InputEngine(store, this)
+        getSystemService(InputManager::class.java).registerInputDeviceListener(deviceListener, handler)
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         Backend.initialize(this)
         notifyState()
@@ -113,6 +121,7 @@ class MapperService : Service(), CaptureLayout.Sink, InputEngine.Host, EditorUi.
     }
 
     override fun onDestroy() {
+        getSystemService(InputManager::class.java).unregisterInputDeviceListener(deviceListener)
         handler.removeCallbacksAndMessages(null)
         try {
             engine.releaseAll()
@@ -235,6 +244,16 @@ class MapperService : Service(), CaptureLayout.Sink, InputEngine.Host, EditorUi.
         root = r
         rootLp = lp
         wm.addView(r, lp)
+        r.addOnLayoutChangeListener { _, left, top, right, bottom, ol, ot, or, ob ->
+            if (right - left != or - ol || bottom - top != ob - ot) {
+                engine.releaseAll()
+                bubbleLp?.let { bl ->
+                    bl.x = bl.x.coerceIn(0, (right - left - dp(36)).coerceAtLeast(0))
+                    bl.y = bl.y.coerceIn(0, (bottom - top - dp(36)).coerceAtLeast(0))
+                    bubbleRoot?.let { runCatching { wm.updateViewLayout(it, bl) } }
+                }
+            }
+        }
         buildBubble()
     }
 
@@ -267,6 +286,7 @@ class MapperService : Service(), CaptureLayout.Sink, InputEngine.Host, EditorUi.
 
     private fun enterPlay() {
         mode = Mode.PLAY
+        root?.captureWheel = true
         recordCb = null
         board?.editing = false
         board?.paused = false
@@ -306,6 +326,7 @@ class MapperService : Service(), CaptureLayout.Sink, InputEngine.Host, EditorUi.
         root?.releasePointerCapture()
         editSnapshot = p.toJson().toString()
         mode = Mode.EDIT
+        root?.captureWheel = false
         board?.paused = false
         board?.editing = true
         editor?.attach(p)
@@ -358,6 +379,7 @@ class MapperService : Service(), CaptureLayout.Sink, InputEngine.Host, EditorUi.
 
     override fun record(prompt: String, cb: (Int) -> Unit) {
         recordCb = cb
+        root?.captureWheel = true
         board?.banner = "$prompt — tekan tombol / klik mouse · Esc batal"
         root?.requestFocus()
         root?.requestPointerCapture()
@@ -366,6 +388,7 @@ class MapperService : Service(), CaptureLayout.Sink, InputEngine.Host, EditorUi.
     private fun finishRecord(code: Int) {
         val cb = recordCb ?: return
         recordCb = null
+        root?.captureWheel = mode == Mode.PLAY
         root?.releasePointerCapture()
         editBanner()
         if (board?.banner?.startsWith("Seret") != true && mode == Mode.EDIT) board?.banner = null
@@ -376,6 +399,7 @@ class MapperService : Service(), CaptureLayout.Sink, InputEngine.Host, EditorUi.
     private fun cancelRecord() {
         if (recordCb == null) return
         recordCb = null
+        root?.captureWheel = mode == Mode.PLAY
         root?.releasePointerCapture()
         editBanner()
     }
@@ -494,7 +518,7 @@ class MapperService : Service(), CaptureLayout.Sink, InputEngine.Host, EditorUi.
         val circle = TextView(this)
         circle.text = "GEN"
         circle.gravity = Gravity.CENTER
-        circle.textSize = 11f
+        circle.textSize = 9f
         circle.setTextColor(0xFF06281A.toInt())
         circle.typeface = android.graphics.Typeface.DEFAULT_BOLD
         val bg = GradientDrawable()
@@ -502,7 +526,7 @@ class MapperService : Service(), CaptureLayout.Sink, InputEngine.Host, EditorUi.
         bg.setColor(Ui.ACCENT)
         bg.setStroke(dp(2), 0xFF0D1015.toInt())
         circle.background = bg
-        circle.layoutParams = LinearLayout.LayoutParams(dp(46), dp(46))
+        circle.layoutParams = LinearLayout.LayoutParams(dp(36), dp(36))
 
         val menu = LinearLayout(this)
         menu.orientation = LinearLayout.VERTICAL
@@ -548,8 +572,10 @@ class MapperService : Service(), CaptureLayout.Sink, InputEngine.Host, EditorUi.
                         if (menuOpen) collapseMenu()
                     }
                     if (dragMoved) {
-                        lp.x = (startX + dx).toInt().coerceAtLeast(0)
-                        lp.y = (startY + dy).toInt().coerceAtLeast(0)
+                        val sw = root?.width ?: resources.displayMetrics.widthPixels
+                        val sh = root?.height ?: resources.displayMetrics.heightPixels
+                        lp.x = (startX + dx).toInt().coerceIn(0, (sw - dp(36)).coerceAtLeast(0))
+                        lp.y = (startY + dy).toInt().coerceIn(0, (sh - dp(36)).coerceAtLeast(0))
                         try {
                             wm.updateViewLayout(rootView, lp)
                         } catch (_: Throwable) {
@@ -561,6 +587,7 @@ class MapperService : Service(), CaptureLayout.Sink, InputEngine.Host, EditorUi.
                     if (dragMoved) {
                         store.bubbleX = lp.x
                         store.bubbleY = lp.y
+                        store.save()
                     } else toggleMenu()
                     true
                 }

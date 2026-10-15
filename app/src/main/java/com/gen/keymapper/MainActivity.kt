@@ -264,7 +264,17 @@ class MainActivity : Activity() {
         c.addView(Ui.button(this, (if (Backend.mode == Backend.Mode.PAIRING) "✓ " else "") + "Pairing mandiri · tanpa Shizuku") {
             Backend.select(Backend.Mode.PAIRING)
         })
-        if (Backend.mode == Backend.Mode.PAIRING) {
+        c.addView(Ui.button(this, (if (Backend.mode == Backend.Mode.OFFLINE) "✓ " else "") + "OTG offline · Aksesibilitas") {
+            Backend.select(Backend.Mode.OFFLINE)
+        })
+        if (Backend.mode == Backend.Mode.OFFLINE) {
+            statusRow(c, if (Backend.isReady()) Ui.ACCENT else Ui.WARN,
+                if (Backend.isReady()) "OTG offline siap" else "Aktifkan Aksesibilitas GenKey",
+                "Tanpa Wi-Fi, root, Shizuku atau pairing. Gesture kamera/multitouch perlu diuji pada game Anda.", "Buka pengaturan") {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+            c.addView(Ui.sub(this, "Layanan hanya mengirim gesture mapping; tidak membaca layar. Jika HyperOS memblokir izin aplikasi hasil instalasi APK, periksa Izinkan setelan terbatas pada Info aplikasi bila tersedia. Aktifkan hanya untuk APK yang Anda percaya."))
+        } else if (Backend.mode == Backend.Mode.PAIRING) {
             statusRow(c, if (Backend.isReady()) Ui.ACCENT else Ui.WARN,
                 if (Backend.isReady()) "Pairing mandiri terhubung" else "Wireless debugging",
                 AdbBackend.message, "Atur koneksi") { showPairing() }
@@ -294,6 +304,10 @@ class MainActivity : Activity() {
                 "Layanan input siap. Gunakan Uji sentuhan untuk memastikan.", null, null
             )
         }
+        c.addView(Ui.button(this, "Pengaturan latar belakang / baterai") {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+        })
+        c.addView(Ui.sub(this, "HyperOS: izinkan autostart dan pilih baterai Tanpa batasan bila tersedia. Mode offline tidak membutuhkan USB debugging. Untuk Shizuku, aktifkan juga USB debugging (Setelan keamanan)."))
         if (overlayOk()) statusRow(c, Ui.ACCENT, "Tampil di atas aplikasi lain", "Diizinkan.", null, null)
         else statusRow(
             c, Ui.DANGER, "Izin overlay diperlukan",

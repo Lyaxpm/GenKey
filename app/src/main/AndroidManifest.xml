@@ -50,5 +50,12 @@
                 android:value="Persistent, user-initiated overlay that maps an external keyboard and mouse to touch input while playing" />
         </service>
 
+        <service android:name=".OfflineInputService"
+            android:label="GenKey · OTG offline"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="true">
+            <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>
+            <meta-data android:name="android.accessibilityservice" android:resource="@xml/offline_input" />
+        </service>
     </application>
 </manifest>
