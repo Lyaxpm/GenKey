@@ -1,3 +1,25 @@
+# GenKey 3.3 — Brevent dan kontrol PC
+
+Lihat README untuk aktivasi Brevent dan Ctrl/Esc. Backend Brevent bersifat eksperimental.
+Aktivasi hanya dari tindakan pengguna dan menggunakan shell yang telah diotorisasi oleh
+Brevent; tidak meningkatkan privilege melalui CVE. Sesi dipertahankan foreground service
+bernotifikasi. Helper `app_process` di-`setsid`; stdout/stdin shell tidak menjadi transport input.
+Transport TCP hanya bind 127.0.0.1 dengan port dan rahasia acak per sesi; helper mengautentikasi
+server dan server mengautentikasi helper melalui HMAC-SHA256 dengan nonce dan role berbeda.
+Helper menolak berjalan tanpa UID shell/root. InputProtocol dibatasi input/diagnostik,
+ukuran baris dibatasi, koneksi terputus melepas jari, dan proses helper keluar setelah EOF.
+Kompilasi/unit test tidak membuktikan helper bertahan ketika Brevent/HyperOS menghentikan proses.
+
+## Uji perangkat 3.3
+- Brevent aktif → Exec Command → GenKey terhubung → Uji sentuhan → matikan Wi-Fi → uji ulang.
+- Stop sesi/force-stop GenKey/reboot: input harus dilepas dan aktivasi baru diperlukan.
+- Jalankan perintah lama setelah sesi baru dibuat: tidak boleh mengaktifkan sesi baru.
+- Ctrl sekali tekan/repeat/Ctrl kiri+kanan: hanya satu perubahan sampai kedua Ctrl dilepas.
+- Tahan Esc, klik-seret menu, lepas Esc: kembali bidik, tidak menembak di posisi mapping lama.
+- Tahan WASD/turbo/swipe saat Ctrl/Esc: semua jari dilepas; tidak ada gerakan tersangkut.
+- Saat Esc ditahan lalu focus hilang atau OTG dicabut: tidak tertinggal dalam mode sementara.
+- Hanya mouse ON/OFF: keyboard diblokir/diizinkan sesuai pilihan, tombol mode selalu bekerja.
+
 # GenKey 3.2 — OTG offline dan editor
 
 Mode **OTG offline · Aksesibilitas** mengirim gesture langsung lewat Android, tanpa

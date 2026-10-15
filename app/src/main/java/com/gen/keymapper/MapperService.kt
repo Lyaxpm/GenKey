@@ -159,7 +159,7 @@ class MapperService : Service(), CaptureLayout.Sink, InputEngine.Host, EditorUi.
         )
         val name = store.profileFor(currentPkg)?.name ?: "GenKeymapper"
         val state = when (mode) {
-            Mode.PLAY -> "Aktif — tekan ${KeyNames.label(store.pauseKey)} untuk jeda"
+            Mode.PLAY -> "${KeyNames.label(store.aimKey)}: bidik/kursor · tahan ${KeyNames.label(store.cursorHoldKey)}: kursor"
             Mode.EDIT -> "Mode edit"
             Mode.PAUSED -> "Dijeda — ketuk bubble GEN untuk lanjut"
         }

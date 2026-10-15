@@ -1,8 +1,40 @@
-# GenKeymapper v3.2
+# GenKeymapper v3.3
 
 Keyboard & mouse untuk game Android, **tanpa root, tanpa iklan, tanpa VIP**.
 Pilih **OTG offline (Aksesibilitas)** untuk bermain dengan kuota atau tanpa jaringan.
 Mode **Shizuku** dan **Pairing mandiri (ADB Wireless)** tetap tersedia.
+
+## Kontrol PC: Ctrl dan Esc
+- **Ctrl kiri atau kanan**: sekali tekan berganti Bidik ↔ Kursor.
+- **Tahan Esc**: kursor bebas sementara. **Lepas Esc**: kembali ke Bidik, termasuk bila sebelumnya memakai mode kursor.
+- Ctrl tidak mengubah mode selama Esc ditahan. Key-repeat tidak men-toggle berulang kali.
+- Di kursor bebas, klik kiri/drag mengikuti posisi kursor; mapping klik kanan/tombol mouse/roda dinonaktifkan.
+  Scroll menu dapat dilakukan dengan klik-seret; roda tidak disuntikkan sebagai scroll native.
+- Pilihan **Hanya mouse saat kursor terbuka** menonaktifkan mapping keyboard. Ctrl, Esc, dan tombol jeda tetap aktif.
+- Transisi mode melepas seluruh jari dan membatalkan joystick, turbo, swipe, serta kamera yang berjalan.
+- Jika sebelumnya mengganti tombol mode, pilih **Pengaturan → Terapkan Ctrl + Esc (gaya PC)**.
+  Ini mengatur tombol, memulai profil terakhir dalam mode bidik, lalu menghentikan mapping agar dimulai ulang.
+- Pengaturan kursor bebas dapat dimatikan untuk perilaku lama (kamera tahan klik kanan). Esc tetap membebaskan kursor.
+
+## Aktivasi Brevent (eksperimental)
+1. Aktifkan Brevent melalui cara resmi yang tersedia pada perangkat. GenKey tidak mengaktifkan Brevent sendiri.
+2. GenKey → Persiapan → **Brevent · Exec Command** → **Aktivasi Brevent**.
+3. Tekan **Buka Brevent**. Bila integrasi intent tidak didukung, salin perintah dan jalankan manual di **Exec Command**.
+4. Kembali ke GenKey. Tunggu **Brevent terhubung lokal**, lalu jalankan **Uji sentuhan** dan mapping game.
+5. Setelah benar-benar terhubung, komunikasi input memakai loopback 127.0.0.1 di perangkat,
+   tidak terikat Wi-Fi, ADB Wireless atau server internet. Uji lagi setelah Wi-Fi dimatikan.
+6. Pertahankan notifikasi **Sesi Brevent**, izinkan GenKey di latar belakang, dan jangan brevent/hentikan GenKey.
+   **Putuskan sesi** pada notifikasi/aplikasi menghentikan helper dan melepas semua sentuhan.
+
+Perintah menjalankan helper shell melalui `setsid` dan tidak memerlukan CVE. Brevent harus
+mengizinkan perintah/proses latar belakang; ROM masih dapat mematikannya. Ini belum diuji di
+Brevent/HyperOS fisik dan bukan jaminan mengatasi setiap pembatasan ROM. Root-mode Brevent
+mungkin membatasi Exec Command. Setelah reboot, force-stop, update APK, atau sesi terputus,
+buat perintah baru. Mode Aksesibilitas tetap tersedia jika aktivasi Brevent gagal.
+
+Koneksi lokal memakai port acak yang hanya bind ke loopback, rahasia acak per sesi,
+dan autentikasi challenge-response dua arah. Helper hanya menerima operasi input/diagnostik,
+bukan perintah shell umum. Tidak ada perubahan SELinux, patch kernel, atau eksploit.
 
 ## OTG + kuota di HyperOS
 1. Di Persiapan pilih **OTG offline · Aksesibilitas**.

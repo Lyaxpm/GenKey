@@ -130,7 +130,15 @@ object KeyNames {
     }
 
     /** Pilihan tombol cepat di Pengaturan. */
+    val cursorHoldKeyChoices: List<Pair<String, Int>> = listOf(
+        "Esc (tahan)" to KeyEvent.KEYCODE_ESCAPE,
+        "Alt kiri (tahan)" to KeyEvent.KEYCODE_ALT_LEFT,
+        "Shift kiri (tahan)" to KeyEvent.KEYCODE_SHIFT_LEFT,
+        "Nonaktif" to NONE
+    )
+
     val aimKeyChoices: List<Pair<String, Int>> = listOf(
+        "Ctrl kiri / kanan" to KeyEvent.KEYCODE_CTRL_LEFT,
         "Klik tengah mouse (MMB)" to MOUSE_MIDDLE,
         "Tombol samping mouse (Back)" to MOUSE_BACK,
         "Tombol samping mouse (Forward)" to MOUSE_FORWARD,

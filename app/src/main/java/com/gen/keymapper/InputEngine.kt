@@ -1,8 +1,5 @@
 package com.gen.keymapper
 
-import android.os.Handler
-import android.os.Looper
-import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.MotionEvent
 import kotlin.math.hypot
@@ -26,6 +23,9 @@ interface EngineSettings {
     val cursorSpeed: Float
     val camSens: Float
     val aimKey: Int
+    val cursorHoldKey: Int get() = KeyEvent.KEYCODE_ESCAPE
+    val freeCursor: Boolean get() = true
+    val mouseOnlyInCursor: Boolean get() = true
 }
 
 /** Tujuan perintah jari virtual. Default: Shizuku. */
@@ -47,7 +47,8 @@ object ShizukuOut : PointerOut {
 class InputEngine(
     private val store: EngineSettings,
     private val host: Host,
-    private val out: PointerOut = ShizukuOut
+    private val out: PointerOut = ShizukuOut,
+    private val handler: InputScheduler = AndroidInputScheduler()
 ) {
 
     interface Host {
@@ -81,11 +82,12 @@ class InputEngine(
         var ticking = false
     }
 
-    private val handler = Handler(Looper.getMainLooper())
     private val bRt = HashMap<String, BRt>()
     private val joyRt = HashMap<String, JoyRt>()
     private val camRt = CamRt()
     private val held = HashSet<Int>()
+    private val modeKeysDown = HashSet<Int>()
+    private var cursorHeld = false
     private var camHoldBinding: Binding? = null
     private var cursorDown = false
 
@@ -119,7 +121,17 @@ class InputEngine(
 
     /** Lepas semua jari dan hentikan semua timer (jeda, edit, atau berhenti). */
     fun releaseAll() {
-        handler.removeCallbacksAndMessages(null)
+        clearInput()
+        modeKeysDown.clear()
+        if (cursorHeld) {
+            cursorHeld = false
+            aim = true
+            host.onAimChanged(aim)
+        }
+    }
+
+    private fun clearInput() {
+        handler.clear()
         wheelReleases.clear()
         bRt.clear()
         joyRt.clear()
@@ -154,39 +166,41 @@ class InputEngine(
 
     // ---------- mode ----------
 
-    fun toggleAim() = setAim(!aim)
+    fun toggleAim() { if (!cursorHeld) setAim(!aim) }
 
     fun setAim(on: Boolean) {
+        if (cursorHeld && on) return
         if (on == aim) return
-        releaseHeld()
-        endCamera()
+        // Stop joystick, turbo, swipe timers, mouse drag and camera together.
+        // Keep mode-key latches so repeats cannot toggle again or lose Esc's release.
+        clearInput()
         aim = on
         host.onAimChanged(aim)
         host.onVisualChanged()
     }
 
-    /** Lepas semua tombol yang sedang ditahan (saat berpindah mode). */
-    private fun releaseHeld() {
-        val g = host.geo()
-        val p = profile
-        if (p != null && g != null) {
-            for (b in p.bindings) {
-                if (b.type != Bt.KEY) continue
-                val r = bRt[b.id] ?: continue
-                r.turbo?.let { handler.removeCallbacks(it) }
-                r.turbo = null
-                if (r.pressed || r.toggled) ptr(tok(b), MotionEvent.ACTION_UP, g.sx(b.x), g.sy(b.y))
-                r.pressed = false
-                r.toggled = false
+    private fun isToggleKey(code: Int): Boolean = code == store.aimKey ||
+        ((store.aimKey == KeyEvent.KEYCODE_CTRL_LEFT || store.aimKey == KeyEvent.KEYCODE_CTRL_RIGHT) &&
+            (code == KeyEvent.KEYCODE_CTRL_LEFT || code == KeyEvent.KEYCODE_CTRL_RIGHT))
+
+    private fun modeKey(code: Int, down: Boolean): Boolean {
+        if (code == store.cursorHoldKey && code != KeyNames.NONE) {
+            if (down) {
+                if (modeKeysDown.add(code)) { cursorHeld = true; if (aim) setAim(false) else clearInput() }
+            } else if (modeKeysDown.remove(code) && cursorHeld) {
+                cursorHeld = false
+                setAim(true)
             }
+            return true
         }
-        if (cursorDown) {
-            val ox = g?.ox ?: 0
-            val oy = g?.oy ?: 0
-            ptr(CURSOR_TOKEN, MotionEvent.ACTION_UP, ox + cursorX, oy + cursorY)
-            cursorDown = false
+        if (isToggleKey(code)) {
+            if (down) {
+                val alreadyHeld = modeKeysDown.any { isToggleKey(it) }
+                if (modeKeysDown.add(code) && !alreadyHeld) toggleAim()
+            } else modeKeysDown.remove(code)
+            return true
         }
-        camHoldBinding = null
+        return false
     }
 
     // ---------- masukan ----------
@@ -196,12 +210,25 @@ class InputEngine(
         val code = e.keyCode
         if (KeyNames.isSystemKey(code)) return false
         val isDown = e.action == KeyEvent.ACTION_DOWN
-        if (isDown && e.repeatCount > 0) return held.contains(code)
-        return trigger(code, isDown)
+        if (isDown && e.repeatCount > 0) return modeKeysDown.contains(code) || held.contains(code) ||
+            (!aim && (store.mouseOnlyInCursor || cursorHeld))
+        return onButton(code, isDown)
+    }
+
+    /** Shared keyboard path, also exercised without Android KeyEvent objects in tests. */
+    fun onButton(code: Int, down: Boolean): Boolean {
+        if (KeyNames.isSystemKey(code)) return false
+        if (modeKey(code, down)) return true
+        return trigger(code, down)
     }
 
     fun onMouseButton(code: Int, isDown: Boolean): Boolean {
         if (code == KeyNames.NONE) return false
+        if (modeKey(code, isDown)) return true
+        if (!aim && (store.freeCursor || cursorHeld)) {
+            if (code == KeyNames.MOUSE_LEFT) cursorClick(isDown)
+            return true
+        }
         val consumed = trigger(code, isDown)
         if (!consumed && code == KeyNames.MOUSE_LEFT && !aim && activeCamera() == null) {
             cursorClick(isDown)
@@ -213,6 +240,8 @@ class InputEngine(
     private val wheelReleases = HashMap<Int, Runnable>()
 
     fun onWheel(v: Float, h: Float = 0f) {
+        // In menu mode wheel must never fire game bindings.
+        if (!aim && (store.freeCursor || cursorHeld)) return
         fun pulse(value: Float, positive: Int, negative: Int) {
             if (value == 0f) return
             val code = if (value > 0f) positive else negative
@@ -271,16 +300,14 @@ class InputEngine(
     private fun dispatch(code: Int, isDown: Boolean): Boolean {
         val p = profile ?: return false
         var matched = false
-        if (code == store.aimKey) {
+        if (p.bindings.any { it.type == Bt.AIM && it.key == code }) {
             if (isDown) toggleAim()
-            matched = true
+            return true
         }
+        if (!aim && (store.mouseOnlyInCursor || cursorHeld) && KeyNames.isKeyboard(code)) return true
+        if (!aim && (store.freeCursor || cursorHeld) && (KeyNames.isMouseButton(code) || KeyNames.isWheel(code))) return false
         for (b in p.bindings) {
             when (b.type) {
-                Bt.AIM -> if (b.key == code) {
-                    if (isDown) toggleAim()
-                    matched = true
-                }
                 Bt.JOY -> {
                     val d = joyDir(b, code)
                     if (d >= 0) {
@@ -443,6 +470,7 @@ class InputEngine(
     private fun activeCamera(): Binding? {
         val p = profile ?: return null
         if (aim) return p.bindings.firstOrNull { it.type == Bt.CAM }
+        if (store.freeCursor || cursorHeld) return null
         val h = camHoldBinding
         if (h != null && held.contains(h.camHold)) return h
         return null
@@ -457,7 +485,7 @@ class InputEngine(
                 endCamera()
                 return
             }
-            val now = SystemClock.uptimeMillis()
+            val now = handler.now()
             val ax = camRt.ax
             val ay = camRt.ay
             if (ax == 0f && ay == 0f) {

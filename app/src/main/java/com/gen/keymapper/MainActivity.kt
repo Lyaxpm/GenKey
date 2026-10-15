@@ -254,6 +254,45 @@ class MainActivity : Activity() {
         d.show()
     }
 
+    private fun showBreventActivation() {
+        if (BreventBackend.ready) {
+            Toast.makeText(this, "Sesi sudah aktif. Gunakan Uji sentuhan atau Putuskan sesi untuk aktivasi ulang.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val command = try {
+            val value = BreventBackend.prepare()
+            startForegroundService(Intent(this, BreventSessionService::class.java))
+            value
+        } catch (e: Exception) {
+            BreventBackend.disconnect()
+            Toast.makeText(this, e.message ?: "Aktivasi gagal", Toast.LENGTH_LONG).show()
+            return
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(8), dp(18), dp(12))
+        }
+        box.addView(Ui.sub(this, "Brevent harus sudah aktif. Jalankan perintah ini di Exec Command, lalu kembali ke GenKey dan Uji sentuhan. Setelah terhubung, input memakai koneksi lokal di HP, bukan Wi-Fi. Dukungan proses latar belakang tetap bergantung versi Brevent/HyperOS."))
+        box.addView(Ui.text(this, command, 11f, Ui.ACCENT).apply { setTextIsSelectable(true); setPadding(0, dp(12), 0, dp(12)) })
+        box.addView(Ui.sub(this, "Perintah berlaku untuk sesi ini. Setelah reboot, paksa berhenti, update APK, atau Putuskan sesi, buat perintah baru. Izinkan GenKey berjalan di latar belakang dan jangan masukkan GenKey ke daftar aplikasi yang dihentikan Brevent."))
+        dialog().setTitle("Aktivasi Brevent · eksperimental").setView(ScrollView(this).apply { addView(box) })
+            .setPositiveButton("Buka Brevent") { _, _ ->
+                val intent = Intent(BreventBackend.ACTION).setPackage(BreventBackend.PACKAGE)
+                    .putExtra(BreventBackend.EXTRA, command)
+                runCatching { startActivity(intent) }.onFailure {
+                    getSystemService(android.content.ClipboardManager::class.java)
+                        .setPrimaryClip(android.content.ClipData.newPlainText("Aktivasi GenKey", command))
+                    launchPackage(BreventBackend.PACKAGE)
+                    Toast.makeText(this, "Perintah disalin. Tempel di Exec Command Brevent.", Toast.LENGTH_LONG).show()
+                }
+            }
+            .setNeutralButton("Salin perintah") { _, _ ->
+                getSystemService(android.content.ClipboardManager::class.java)
+                    .setPrimaryClip(android.content.ClipData.newPlainText("Aktivasi GenKey", command))
+                Toast.makeText(this, "Tempel dan jalankan di Exec Command Brevent.", Toast.LENGTH_LONG).show()
+            }.setNegativeButton("Tutup", null).show()
+    }
+
     private fun setupCard() {
         val c = Ui.card(this)
         c.addView(Ui.title(this, "Persiapan"))
@@ -267,7 +306,18 @@ class MainActivity : Activity() {
         c.addView(Ui.button(this, (if (Backend.mode == Backend.Mode.OFFLINE) "✓ " else "") + "OTG offline · Aksesibilitas") {
             Backend.select(Backend.Mode.OFFLINE)
         })
-        if (Backend.mode == Backend.Mode.OFFLINE) {
+        c.addView(Ui.button(this, (if (Backend.mode == Backend.Mode.BREVENT) "✓ " else "") + "Brevent · Exec Command") {
+            Backend.select(Backend.Mode.BREVENT)
+        })
+        if (Backend.mode == Backend.Mode.BREVENT) {
+            statusRow(c, if (Backend.isReady()) Ui.ACCENT else Ui.WARN,
+                if (Backend.isReady()) "Brevent terhubung lokal" else "Aktivasi Brevent diperlukan",
+                BreventBackend.message, "Aktivasi Brevent") { showBreventActivation() }
+            c.addView(Ui.button(this, "Putuskan sesi Brevent") {
+                stopService(Intent(this, BreventSessionService::class.java))
+                BreventBackend.disconnect()
+            })
+        } else if (Backend.mode == Backend.Mode.OFFLINE) {
             statusRow(c, if (Backend.isReady()) Ui.ACCENT else Ui.WARN,
                 if (Backend.isReady()) "OTG offline siap" else "Aktifkan Aksesibilitas GenKey",
                 "Tanpa Wi-Fi, root, Shizuku atau pairing. Gesture kamera/multitouch perlu diuji pada game Anda.", "Buka pengaturan") {
@@ -707,6 +757,23 @@ class MainActivity : Activity() {
         c.addView(choiceRow("Tombol Mode Bidik", KeyNames.label(store.aimKey)) {
             pickKey("Tombol berpindah Kursor ↔ Bidik", KeyNames.aimKeyChoices, store.aimKey) { store.aimKey = it }
         })
+        c.addView(choiceRow("Kursor sementara (tahan)", KeyNames.label(store.cursorHoldKey)) {
+            pickKey("Tahan untuk kursor; lepas kembali bidik", KeyNames.cursorHoldKeyChoices, store.cursorHoldKey) { store.cursorHoldKey = it }
+        })
+        c.addView(switchRow("Kursor bebas: abaikan mapping mouse", store.freeCursor) { store.freeCursor = it })
+        c.addView(switchRow("Hanya mouse saat kursor terbuka", store.mouseOnlyInCursor) { store.mouseOnlyInCursor = it })
+        c.addView(Ui.button(this, "Terapkan Ctrl + Esc (gaya PC)", filled = true) {
+            store.aimKey = KeyEvent.KEYCODE_CTRL_LEFT
+            store.cursorHoldKey = KeyEvent.KEYCODE_ESCAPE
+            store.freeCursor = true
+            store.mouseOnlyInCursor = true
+            store.profileFor(store.lastPkg)?.startAim = true
+            store.save()
+            stopService(Intent(this, MapperService::class.java))
+            Toast.makeText(this, "Kontrol PC disimpan. Mulai mapping kembali.", Toast.LENGTH_LONG).show()
+            render()
+        })
+        c.addView(Ui.sub(this, "Ctrl: bidik/kursor. Tahan Esc: kursor sementara; lepas: bidik. Saat kursor bebas, klik kiri dan seret mengikuti kursor; mapping klik/roda mouse dinonaktifkan. Hanya mouse mematikan mapping keyboard, kecuali tombol mode dan jeda."))
         c.addView(choiceRow("Tombol Jeda mapping", KeyNames.label(store.pauseKey)) {
             pickKey("Tombol jeda / lanjut", KeyNames.pauseKeyChoices, store.pauseKey) { store.pauseKey = it }
         })

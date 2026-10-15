@@ -253,7 +253,7 @@ class BoardView(
         val text = when {
             paused -> "JEDA"
             engine.aim -> "BIDIK"
-            else -> "KURSOR"
+            else -> if (store.mouseOnlyInCursor) "KURSOR · MOUSE" else "KURSOR"
         }
         val col = when {
             paused -> Ui.WARN
