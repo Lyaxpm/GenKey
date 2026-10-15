@@ -7,191 +7,137 @@ import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.view.MotionEvent
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicInteger
 import rikka.shizuku.Shizuku
 
-/** Jembatan ke Shizuku v13: izin, bind UserService, dan antrean perintah sentuh. */
 object ShizukuBridge {
-
-    enum class State { NOT_INSTALLED, NOT_RUNNING, NO_PERMISSION, CONNECTING, READY }
-
+    enum class State { NOT_INSTALLED, NOT_RUNNING, NO_PERMISSION, CONNECTING, READY, ERROR }
     const val SHIZUKU_PKG = "moe.shizuku.privileged.api"
     private const val REQUEST_CODE = 9911
-    private const val SERVICE_VERSION = 3
-
-    @Volatile private var remote: IInputBridge? = null
-    @Volatile private var initialized = false
-    @Volatile private var binding = false
-    private lateinit var app: Context
     private val main = Handler(Looper.getMainLooper())
-    private val worker = Executors.newSingleThreadExecutor()
-    private val pendingMoves = AtomicInteger(0)
+    private val checks = Executors.newCachedThreadPool()
+    private val input = InputQueue()
+    private lateinit var app: Context
+    private var initialized = false
+    private var generation = 0
+    private var connection: ServiceConnection? = null
+    private var args: Shizuku.UserServiceArgs? = null
+    @Volatile private var remote: IInputBridge? = null
+    @Volatile private var binding = false
+    @Volatile var error = ""
+        private set
+    var listener: (() -> Unit)? = null
+    private fun changed() { main.post { listener?.invoke() } }
 
-    /** Dipanggil di main thread setiap status berubah. */
-    @Volatile var listener: (() -> Unit)? = null
-
-    private fun notifyChanged() {
-        main.post { listener?.invoke() }
-    }
-
-    private val connection = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-            remote = if (binder != null && binder.pingBinder()) IInputBridge.Stub.asInterface(binder) else null
-            binding = false
-            notifyChanged()
-        }
-
-        override fun onServiceDisconnected(name: ComponentName?) {
-            remote = null
-            binding = false
-            notifyChanged()
-        }
-    }
-
-    private val binderReceived = Shizuku.OnBinderReceivedListener {
-        connect()
-        notifyChanged()
-    }
-    private val binderDead = Shizuku.OnBinderDeadListener {
-        remote = null
-        binding = false
-        notifyChanged()
-    }
-    private val permissionResult = Shizuku.OnRequestPermissionResultListener { request, result ->
-        if (request == REQUEST_CODE && result == PackageManager.PERMISSION_GRANTED) connect()
-        notifyChanged()
-    }
-
-    @Synchronized
     fun initialize(context: Context) {
         if (initialized) return
         app = context.applicationContext
         initialized = true
-        try {
-            Shizuku.addBinderReceivedListenerSticky(binderReceived)
-            Shizuku.addBinderDeadListener(binderDead)
-            Shizuku.addRequestPermissionResultListener(permissionResult)
-        } catch (_: Throwable) {
+        Shizuku.addBinderReceivedListenerSticky { main.post { if (Backend.mode == Backend.Mode.SHIZUKU) { error = ""; connect() }; changed() } }
+        Shizuku.addBinderDeadListener { main.post { disconnect(); changed() } }
+        Shizuku.addRequestPermissionResultListener { request, result ->
+            if (request == REQUEST_CODE) main.post {
+                if (result == PackageManager.PERMISSION_GRANTED) {
+                    if (Backend.mode == Backend.Mode.SHIZUKU) reconnect()
+                }
+                else { error = "Izin ditolak. Izinkan GenKey di aplikasi Shizuku."; changed() }
+            }
         }
-        connect()
     }
 
-    // ---------- status ----------
-
-    fun isInstalled(): Boolean = try {
-        app.packageManager.getPackageInfo(SHIZUKU_PKG, 0)
-        true
-    } catch (_: Throwable) {
-        false
-    }
-
-    fun isRunning(): Boolean = try {
-        Shizuku.pingBinder()
-    } catch (_: Throwable) {
-        false
-    }
-
-    fun hasPermission(): Boolean = try {
+    fun isRunning() = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
+    fun hasPermission() = runCatching {
         isRunning() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
-    } catch (_: Throwable) {
-        false
-    }
-
-    fun isReady(): Boolean = remote != null
-
+    }.getOrDefault(false)
+    fun isInstalled() = runCatching { app.packageManager.getPackageInfo(SHIZUKU_PKG, 0); true }.getOrDefault(false)
+    fun isReady() = remote?.asBinder()?.isBinderAlive == true
     fun state(): State = when {
-        remote != null -> State.READY
+        isReady() -> State.READY
         !isRunning() -> if (isInstalled()) State.NOT_RUNNING else State.NOT_INSTALLED
         !hasPermission() -> State.NO_PERMISSION
+        error.isNotEmpty() -> State.ERROR
         else -> State.CONNECTING
     }
 
-    // ---------- koneksi ----------
-
-    /** Dipanggil tombol pengguna; tidak meminta izin diam-diam. */
     fun requestPermission() {
-        try {
+        runCatching {
             if (!isRunning()) return
-            if (hasPermission()) connect()
-            else if (!Shizuku.shouldShowRequestPermissionRationale()) Shizuku.requestPermission(REQUEST_CODE)
-        } catch (_: Throwable) {
-        }
+            if (hasPermission()) reconnect()
+            else if (Shizuku.shouldShowRequestPermissionRationale()) {
+                error = "Buka Shizuku > Aplikasi berizin, lalu izinkan GenKey."; changed()
+            } else Shizuku.requestPermission(REQUEST_CODE)
+        }.onFailure { error = it.message ?: it.toString(); changed() }
     }
 
-    @Synchronized
     fun connect() {
-        if (!initialized || remote != null || binding) return
-        if (!hasPermission()) return
-        try {
-            binding = true
-            val args = Shizuku.UserServiceArgs(ComponentName(app, ShellInputService::class.java))
-                .daemon(false)
-                .processNameSuffix("gen_input")
-                .tag("gen_input_v$SERVICE_VERSION")
-                .version(SERVICE_VERSION)
-            Shizuku.bindUserService(args, connection)
-        } catch (_: Throwable) {
-            binding = false
+        if (!initialized || isReady() || binding || error.isNotEmpty() || !hasPermission()) return
+        binding = true
+        val attempt = ++generation
+        val serviceArgs = Shizuku.UserServiceArgs(ComponentName(app, ShellInputService::class.java))
+            .daemon(false).processNameSuffix("gen_input").tag("gen_input").version(5)
+        val conn = object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+                // Never perform synchronous input-service IPC on the UI thread.
+                checks.execute {
+                    val target = binder?.let { IInputBridge.Stub.asInterface(it) }
+                    val result = runCatching {
+                        check(target != null && target.ping()) { target?.diag() ?: "Binder input kosong" }
+                        target
+                    }
+                    main.post {
+                        if (generation != attempt) return@post
+                        result.onSuccess {
+                            remote = it
+                            binding = false
+                            runCatching { binder?.linkToDeath({ main.post {
+                                if (generation == attempt) fail("Layanan input terputus. Tekan Coba lagi.")
+                            } }, 0) }
+                            changed()
+                        }.onFailure { fail(it.message ?: it.toString()) }
+                    }
+                }
+            }
+            override fun onServiceDisconnected(name: ComponentName?) {
+                main.post { if (generation == attempt) fail("Layanan input terputus. Tekan Coba lagi.") }
+            }
         }
+        args = serviceArgs
+        connection = conn
+        runCatching { Shizuku.bindUserService(serviceArgs, conn) }
+            .onFailure { fail(it.message ?: it.toString()) }
+        main.postDelayed({
+            if (generation == attempt && binding) fail("Layanan input tidak menjawab dalam 12 detik. Periksa Shizuku dan USB debugging (Setelan keamanan). Untuk tanpa Wi-Fi pilih OTG offline.")
+        }, 12_000)
+        changed()
     }
 
-    /** Paksa sambung ulang (mis. setelah Shizuku dimulai ulang). */
-    fun reconnect() {
+    private fun fail(message: String) { disconnect(); error = message; changed() }
+    fun disconnect() {
+        generation++
+        val old = remote
         remote = null
         binding = false
-        connect()
-        notifyChanged()
+        if (old != null) input.submit { runCatching { old.releaseAll() } }
+        val a = args
+        val c = connection
+        args = null; connection = null
+        if (a != null && c != null) runCatching { Shizuku.unbindUserService(a, c, true) }
+        error = ""
     }
-
-    // ---------- perintah ----------
-
-    private fun submit(block: (IInputBridge) -> Unit): Boolean {
+    fun reconnect() { disconnect(); connect() }
+    private fun submit(move: Int? = null, action: (IInputBridge) -> Unit): Boolean {
         val target = remote ?: return false
-        worker.execute {
-            try {
-                block(target)
-            } catch (_: Throwable) {
-                if (remote === target) {
-                    remote = null
-                    binding = false
-                    notifyChanged()
-                }
+        input.submit(move) {
+            if (remote === target) runCatching { action(target) }.onFailure { t ->
+                main.post { if (remote === target) fail(t.message ?: "Input gagal") }
             }
         }
         return true
     }
-
-    fun pointer(token: Int, action: Int, x: Float, y: Float): Boolean {
-        val isMove = action == android.view.MotionEvent.ACTION_MOVE
-        if (isMove) {
-            // Jangan menumpuk MOVE jika Shizuku lambat: buang yang kedaluwarsa.
-            if (pendingMoves.get() > 24) return true
-            pendingMoves.incrementAndGet()
-        }
-        val ok = submit {
-            try {
-                it.pointer(token, action, x, y)
-            } finally {
-                if (isMove) pendingMoves.decrementAndGet()
-            }
-        }
-        if (!ok && isMove) pendingMoves.decrementAndGet()
-        return ok
-    }
-
-    fun releaseAll() {
-        submit { it.releaseAll() }
-    }
-
-    fun key(keyCode: Int) {
-        submit { it.key(keyCode) }
-    }
-
-    /** Diagnosa sinkron (dipanggil di thread latar). Mengembalikan null jika belum terhubung. */
-    fun diagBlocking(): String? = try {
-        remote?.diag()
-    } catch (_: Throwable) {
-        null
-    }
+    fun pointer(token: Int, action: Int, x: Float, y: Float) =
+        submit(if (action == MotionEvent.ACTION_MOVE) token else null) { it.pointer(token, action, x, y) }
+    fun releaseAll() { submit { it.releaseAll() } }
+    fun key(code: Int) { submit { it.key(code) } }
+    fun diagBlocking(): String? = runCatching { remote?.diag() }.getOrNull() ?: error
 }

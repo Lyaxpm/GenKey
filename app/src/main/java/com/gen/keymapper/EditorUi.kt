@@ -26,6 +26,7 @@ class EditorUi(
     }
 
     private var profile: Profile? = null
+    private var collapsed = false
 
     val toolbar: View
     val panel: ScrollView
@@ -34,18 +35,12 @@ class EditorUi(
     private fun dp(v: Int) = Ui.dp(ctx, v)
 
     init {
-        // ----- toolbar -----
-        val row = LinearLayout(ctx)
-        row.orientation = LinearLayout.HORIZONTAL
-        row.gravity = Gravity.CENTER_VERTICAL
-        row.setPadding(dp(10), dp(8), dp(10), dp(8))
-        fun add(label: String, filled: Boolean = false, danger: Boolean = false, onClick: () -> Unit) {
-            val b = Ui.button(ctx, label, filled, danger, onClick)
-            b.layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).also { it.rightMargin = dp(6) }
-            row.addView(b)
+        // Compact floating bar: add controls scroll; save/cancel always remain visible.
+        val row = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
         }
+        fun add(label: String, action: () -> Unit) { row.addView(compact(label, action)) }
         add("+ Tap") { addKey(Act.TAP) }
         add("+ Tahan") { addKey(Act.HOLD) }
         add("+ Toggle") { addKey(Act.TOGGLE) }
@@ -53,37 +48,65 @@ class EditorUi(
         add("+ Geser") { addKey(Act.SWIPE) }
         add("+ Joystick") { addJoystick() }
         add("+ Kamera") { addCamera() }
-        add("+ Mode Bidik") { addAim() }
-        add("Batal", danger = true) { host.finishEdit(false) }
-        add("Simpan", filled = true) { host.finishEdit(true) }
-
-        val hs = HorizontalScrollView(ctx)
-        hs.isHorizontalScrollBarEnabled = false
-        hs.addView(row)
-        val wrap = FrameLayout(ctx)
-        wrap.background = Ui.round(ctx, 0xF0161B22.toInt(), 22, Ui.STROKE)
-        wrap.addView(hs)
-        val lp = FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-            Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-        )
-        lp.bottomMargin = dp(18)
-        lp.leftMargin = dp(12)
-        lp.rightMargin = dp(12)
-        wrap.layoutParams = lp
+        add("+ Bidik") { addAim() }
+        val hs = HorizontalScrollView(ctx).apply {
+            isHorizontalScrollBarEnabled = true
+            addView(row)
+        }
+        val wrap = LinearLayout(ctx).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), dp(3), dp(4), dp(3))
+            background = Ui.round(ctx, 0xF0161B22.toInt(), 16, Ui.STROKE)
+            layoutParams = FrameLayout.LayoutParams(dp(420), dp(42), Gravity.TOP or Gravity.LEFT)
+                .also { it.leftMargin = dp(8); it.topMargin = dp(56) }
+        }
+        val grip = compact("⋮⋮") {}
+        grip.contentDescription = "Seret toolbar; ketuk untuk lipat atau buka"
+        wrap.addView(grip)
+        wrap.addView(hs, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        wrap.addView(compact("×") { host.finishEdit(false) }.apply { contentDescription = "Batalkan perubahan" })
+        wrap.addView(compact("✓") { host.finishEdit(true) }.apply { contentDescription = "Simpan mapping"; setTextColor(Ui.ACCENT) })
+        FloatingEditor.drag(grip, wrap) {
+            collapsed = !collapsed
+            hs.visibility = if (collapsed) View.GONE else View.VISIBLE
+            resize()
+        }
         toolbar = wrap
 
         // ----- panel -----
         panelBody.orientation = LinearLayout.VERTICAL
-        panelBody.setPadding(dp(14), dp(12), dp(14), dp(14))
+        panelBody.setPadding(dp(9), dp(8), dp(9), dp(9))
         panel = ScrollView(ctx)
         panel.background = Ui.round(ctx, 0xF2161B22.toInt(), 20, Ui.STROKE)
         panel.addView(panelBody)
-        val plp = FrameLayout.LayoutParams(dp(272), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END)
-        plp.topMargin = dp(14)
-        plp.rightMargin = dp(14)
+        val plp = FrameLayout.LayoutParams(dp(220), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.LEFT)
+        plp.topMargin = dp(104)
+        plp.leftMargin = dp(8)
         panel.layoutParams = plp
         panel.visibility = View.GONE
+        board.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> resize() }
+        board.onDrag = { panel.visibility = View.GONE }
+    }
+
+    private fun compact(text: String, action: () -> Unit): TextView = Ui.button(ctx, text, onClick = action).apply {
+        textSize = 11f
+        setPadding(dp(8), dp(4), dp(8), dp(4))
+        minHeight = dp(34)
+        contentDescription = text
+    }
+
+    private fun resize() {
+        val parent = toolbar.parent as? View ?: return
+        val safe = FloatingEditor.safe(parent)
+        val available = (safe.width() - dp(12)).coerceAtLeast(dp(120))
+        toolbar.layoutParams = (toolbar.layoutParams as FrameLayout.LayoutParams).also {
+            it.width = minOf(dp(if (collapsed) 120 else 420), available)
+        }
+        panel.layoutParams = (panel.layoutParams as FrameLayout.LayoutParams).also {
+            it.width = minOf(dp(220), available)
+            it.height = minOf(dp(300), (safe.height() * 0.65f).toInt()).coerceAtLeast(dp(48))
+        }
+        toolbar.post { FloatingEditor.constrain(toolbar); FloatingEditor.constrain(panel) }
     }
 
     fun attach(p: Profile) {
@@ -166,16 +189,15 @@ class EditorUi(
         }
         rebuild(b)
         panel.visibility = View.VISIBLE
-        val lp = panel.layoutParams
-        lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
-        panel.layoutParams = lp
+        resize()
         panel.post {
-            val max = (host.rootHeight() * 0.62f).toInt()
-            if (max > 0 && panel.height > max) {
-                val l2 = panel.layoutParams
-                l2.height = max
-                panel.layoutParams = l2
-            }
+            val parent = panel.parent as? View ?: return@post
+            val safe = FloatingEditor.safe(parent)
+            // Open opposite the selected control, leaving its drag origin exposed.
+            panel.x = if (b.x > 0.5f) (safe.left + dp(8)).toFloat()
+                else (safe.right - panel.width - dp(8)).toFloat()
+            panel.y = (safe.top + dp(8)).toFloat()
+            FloatingEditor.constrain(panel)
         }
     }
 
@@ -193,8 +215,11 @@ class EditorUi(
         head.gravity = Gravity.CENTER_VERTICAL
         val t = Ui.text(ctx, typeTitle(b), 15f, Ui.TEXT, true)
         t.layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        t.text = "⋮⋮  " + t.text
+        t.setPadding(0, dp(6), 0, dp(6))
+        FloatingEditor.drag(t, panel)
         head.addView(t)
-        head.addView(Ui.button(ctx, "✕") { select(null) })
+        head.addView(compact("×") { select(null) })
         panelBody.addView(head)
 
         when (b.type) {

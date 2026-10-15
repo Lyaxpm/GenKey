@@ -17,12 +17,13 @@ class CaptureLayout(ctx: Context) : FrameLayout(ctx) {
         fun onKey(e: KeyEvent): Boolean
         fun onMouseButton(code: Int, down: Boolean): Boolean
         fun onMouseMove(dx: Float, dy: Float)
-        fun onWheel(v: Float)
+        fun onWheel(v: Float, h: Float)
         fun onFocus(has: Boolean)
         fun onCapture(has: Boolean)
     }
 
     var sink: Sink? = null
+    var captureWheel = true
     private var lastTx = 0f
     private var lastTy = 0f
     private var haveLast = false
@@ -45,7 +46,7 @@ class CaptureLayout(ctx: Context) : FrameLayout(ctx) {
             MotionEvent.ACTION_BUTTON_RELEASE ->
                 s.onMouseButton(KeyNames.fromActionButton(e.actionButton), false)
             MotionEvent.ACTION_SCROLL ->
-                s.onWheel(e.getAxisValue(MotionEvent.AXIS_VSCROLL))
+                s.onWheel(e.getAxisValue(MotionEvent.AXIS_VSCROLL), e.getAxisValue(MotionEvent.AXIS_HSCROLL))
             MotionEvent.ACTION_MOVE, MotionEvent.ACTION_HOVER_MOVE -> {
                 if ((e.source and InputDevice.SOURCE_MOUSE_RELATIVE) == InputDevice.SOURCE_MOUSE_RELATIVE) {
                     // Mouse: nilai x/y adalah selisih relatif; jumlahkan semua sampel yang dibatch.
@@ -67,6 +68,15 @@ class CaptureLayout(ctx: Context) : FrameLayout(ctx) {
             MotionEvent.ACTION_DOWN -> haveLast = false
         }
         return true
+    }
+
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        if (captureWheel && event.actionMasked == MotionEvent.ACTION_SCROLL) {
+            sink?.onWheel(event.getAxisValue(MotionEvent.AXIS_VSCROLL),
+                event.getAxisValue(MotionEvent.AXIS_HSCROLL))
+            return sink != null
+        }
+        return super.onGenericMotionEvent(event)
     }
 
     override fun onWindowFocusChanged(hasWindowFocus: Boolean) {

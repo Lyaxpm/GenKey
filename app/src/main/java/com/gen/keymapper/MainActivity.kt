@@ -19,6 +19,7 @@ import android.text.Editable
 import android.text.TextWatcher
 import android.view.Gravity
 import android.view.InputDevice
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -50,7 +51,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         store = MappingStore(this)
         store.load()
-        ShizukuBridge.initialize(this)
+        Backend.initialize(this)
 
         window.setBackgroundDrawable(ColorDrawable(Ui.BG))
         window.statusBarColor = 0
@@ -84,16 +85,16 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         store.load()
-        ShizukuBridge.listener = { render() }
+        Backend.listener = { render() }
         MapperService.onStateChanged = { render() }
         registerDevices()
-        ShizukuBridge.connect()
+        Backend.connect()
         render()
     }
 
     override fun onPause() {
         super.onPause()
-        ShizukuBridge.listener = null
+        Backend.listener = null
         MapperService.onStateChanged = null
         unregisterDevices()
     }
@@ -152,7 +153,7 @@ class MainActivity : Activity() {
         col.addView(Ui.text(this, "GenKeymapper", 26f, Ui.TEXT, true))
         col.addView(Ui.sub(this, "Keyboard & mouse untuk game Android · v3.0"))
         row.addView(col)
-        val ready = ShizukuBridge.isReady() && overlayOk()
+        val ready = Backend.isReady() && overlayOk()
         val pill = Ui.text(this, if (ready) "SIAP" else "PERLU SETUP", 11.5f, if (ready) Ui.ACCENT else Ui.WARN, true)
         pill.setPadding(dp(12), dp(6), dp(12), dp(6))
         pill.background = Ui.round(this, Ui.withAlpha(if (ready) Ui.ACCENT else Ui.WARN, 0.12f), 14, if (ready) Ui.ACCENT else Ui.WARN)
@@ -201,31 +202,163 @@ class MainActivity : Activity() {
         parent.addView(row)
     }
 
+    private fun showPairing() {
+        val prefs = getSharedPreferences("backend", 0)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(8))
+        }
+        box.addView(Ui.text(this, "Android 11+: aktifkan Opsi pengembang → Wireless debugging. " +
+            "Gunakan layar terbagi agar dialog kode pairing tetap terbuka. Port pairing berbeda dari port koneksi di halaman utama.", 13f, Ui.SUB))
+        fun field(hintText: String, value: String = "", numeric: Boolean = false): EditText {
+            return EditText(this).apply {
+                hint = hintText; setText(value); setTextColor(Ui.TEXT); setHintTextColor(Ui.SUB)
+                inputType = if (numeric) android.text.InputType.TYPE_CLASS_NUMBER else android.text.InputType.TYPE_CLASS_TEXT
+                isSingleLine = true
+                box.addView(this)
+            }
+        }
+        val host = field("IP pada Wireless debugging", prefs.getString("host", "127.0.0.1") ?: "127.0.0.1")
+        val port = field("Port koneksi (halaman utama)", prefs.getInt("port", 0).takeIf { it > 0 }?.toString() ?: "", true)
+        val pairingPort = field("Port pairing (dialog kode)", numeric = true)
+        val code = field("Kode pairing 6 digit", numeric = true).apply {
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            filters = arrayOf(android.text.InputFilter.LengthFilter(6))
+        }
+        box.addView(Ui.button(this, "Buka opsi pengembang") {
+            runCatching { startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)) }
+                .onFailure { Toast.makeText(this, "Buka Opsi pengembang melalui Pengaturan HP.", Toast.LENGTH_LONG).show() }
+        })
+        val status = Ui.text(this, "Sudah pairing? Cukup isi port koneksi terbaru dan pilih Hubungkan.", 12f, Ui.SUB)
+        box.addView(status)
+        val d = dialog().setTitle("Pairing mandiri")
+            .setView(ScrollView(this).apply { addView(box) })
+            .setPositiveButton("Pair & hubungkan", null)
+            .setNeutralButton("Hubungkan", null)
+            .setNegativeButton("Tutup", null).create()
+        d.setOnShowListener {
+            fun start(pair: Boolean) {
+                if (AdbBackend.busy) { status.text = "Koneksi masih berjalan. Tunggu hasilnya."; return }
+                val cp = port.text.toString().toIntOrNull() ?: 0
+                val pp = pairingPort.text.toString().toIntOrNull()
+                val pin = code.text.toString()
+                if (host.text.isBlank() || cp !in 1..65535 || (pair && (pp == null || pp !in 1..65535 || pin.length != 6))) {
+                    status.text = "Periksa IP, port koneksi, port pairing, dan kode 6 digit."
+                    return
+                }
+                AdbBackend.start(host.text.toString().trim(), pp, pin, cp, pair)
+                d.dismiss()
+            }
+            d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { start(true) }
+            d.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener { start(false) }
+        }
+        d.show()
+    }
+
+    private fun showBreventActivation() {
+        if (BreventBackend.ready) {
+            Toast.makeText(this, "Sesi sudah aktif. Gunakan Uji sentuhan atau Putuskan sesi untuk aktivasi ulang.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val command = try {
+            val value = BreventBackend.prepare()
+            startForegroundService(Intent(this, BreventSessionService::class.java))
+            value
+        } catch (e: Exception) {
+            BreventBackend.disconnect()
+            Toast.makeText(this, e.message ?: "Aktivasi gagal", Toast.LENGTH_LONG).show()
+            return
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(8), dp(18), dp(12))
+        }
+        box.addView(Ui.sub(this, "Brevent harus sudah aktif. Jalankan perintah ini di Exec Command, lalu kembali ke GenKey dan Uji sentuhan. Setelah terhubung, input memakai koneksi lokal di HP, bukan Wi-Fi. Dukungan proses latar belakang tetap bergantung versi Brevent/HyperOS."))
+        box.addView(Ui.text(this, command, 11f, Ui.ACCENT).apply { setTextIsSelectable(true); setPadding(0, dp(12), 0, dp(12)) })
+        box.addView(Ui.sub(this, "Perintah berlaku untuk sesi ini. Setelah reboot, paksa berhenti, update APK, atau Putuskan sesi, buat perintah baru. Izinkan GenKey berjalan di latar belakang dan jangan masukkan GenKey ke daftar aplikasi yang dihentikan Brevent."))
+        dialog().setTitle("Aktivasi Brevent · eksperimental").setView(ScrollView(this).apply { addView(box) })
+            .setPositiveButton("Buka Brevent") { _, _ ->
+                val intent = Intent(BreventBackend.ACTION).setPackage(BreventBackend.PACKAGE)
+                    .putExtra(BreventBackend.EXTRA, command)
+                runCatching { startActivity(intent) }.onFailure {
+                    getSystemService(android.content.ClipboardManager::class.java)
+                        .setPrimaryClip(android.content.ClipData.newPlainText("Aktivasi GenKey", command))
+                    launchPackage(BreventBackend.PACKAGE)
+                    Toast.makeText(this, "Perintah disalin. Tempel di Exec Command Brevent.", Toast.LENGTH_LONG).show()
+                }
+            }
+            .setNeutralButton("Salin perintah") { _, _ ->
+                getSystemService(android.content.ClipboardManager::class.java)
+                    .setPrimaryClip(android.content.ClipData.newPlainText("Aktivasi GenKey", command))
+                Toast.makeText(this, "Tempel dan jalankan di Exec Command Brevent.", Toast.LENGTH_LONG).show()
+            }.setNegativeButton("Tutup", null).show()
+    }
+
     private fun setupCard() {
         val c = Ui.card(this)
         c.addView(Ui.title(this, "Persiapan"))
-        when (ShizukuBridge.state()) {
-            ShizukuBridge.State.NOT_INSTALLED -> statusRow(
+        c.addView(Ui.text(this, "Pilih layanan input", 14f, Ui.SUB))
+        c.addView(Ui.button(this, (if (Backend.mode == Backend.Mode.SHIZUKU) "✓ " else "") + "Shizuku") {
+            Backend.select(Backend.Mode.SHIZUKU)
+        })
+        c.addView(Ui.button(this, (if (Backend.mode == Backend.Mode.PAIRING) "✓ " else "") + "Pairing mandiri · tanpa Shizuku") {
+            Backend.select(Backend.Mode.PAIRING)
+        })
+        c.addView(Ui.button(this, (if (Backend.mode == Backend.Mode.OFFLINE) "✓ " else "") + "OTG offline · Aksesibilitas") {
+            Backend.select(Backend.Mode.OFFLINE)
+        })
+        c.addView(Ui.button(this, (if (Backend.mode == Backend.Mode.BREVENT) "✓ " else "") + "Brevent · Exec Command") {
+            Backend.select(Backend.Mode.BREVENT)
+        })
+        if (Backend.mode == Backend.Mode.BREVENT) {
+            statusRow(c, if (Backend.isReady()) Ui.ACCENT else Ui.WARN,
+                if (Backend.isReady()) "Brevent terhubung lokal" else "Aktivasi Brevent diperlukan",
+                BreventBackend.message, "Aktivasi Brevent") { showBreventActivation() }
+            c.addView(Ui.button(this, "Putuskan sesi Brevent") {
+                stopService(Intent(this, BreventSessionService::class.java))
+                BreventBackend.disconnect()
+            })
+        } else if (Backend.mode == Backend.Mode.OFFLINE) {
+            statusRow(c, if (Backend.isReady()) Ui.ACCENT else Ui.WARN,
+                if (Backend.isReady()) "OTG offline siap" else "Aktifkan Aksesibilitas GenKey",
+                "Tanpa Wi-Fi, root, Shizuku atau pairing. Gesture kamera/multitouch perlu diuji pada game Anda.", "Buka pengaturan") {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+            c.addView(Ui.sub(this, "Layanan hanya mengirim gesture mapping; tidak membaca layar. Jika HyperOS memblokir izin aplikasi hasil instalasi APK, periksa Izinkan setelan terbatas pada Info aplikasi bila tersedia. Aktifkan hanya untuk APK yang Anda percaya."))
+        } else if (Backend.mode == Backend.Mode.PAIRING) {
+            statusRow(c, if (Backend.isReady()) Ui.ACCENT else Ui.WARN,
+                if (Backend.isReady()) "Pairing mandiri terhubung" else "Wireless debugging",
+                AdbBackend.message, "Atur koneksi") { showPairing() }
+        } else
+        when (Backend.state()) {
+            Backend.State.NOT_INSTALLED -> statusRow(
                 c, Ui.DANGER, "Shizuku belum terpasang",
                 "Dibutuhkan untuk menyuntikkan sentuhan tanpa root.", "Unduh"
             ) { openUrl("https://shizuku.rikka.app/download/") }
-            ShizukuBridge.State.NOT_RUNNING -> statusRow(
+            Backend.State.NOT_RUNNING -> statusRow(
                 c, Ui.DANGER, "Shizuku belum berjalan",
                 "Buka Shizuku lalu mulai lewat Wireless debugging (Android 11+).", "Buka Shizuku"
-            ) { launchPackage(ShizukuBridge.SHIZUKU_PKG) }
-            ShizukuBridge.State.NO_PERMISSION -> statusRow(
+            ) { launchPackage(Backend.SHIZUKU_PKG) }
+            Backend.State.NO_PERMISSION -> statusRow(
                 c, Ui.WARN, "Izin Shizuku diperlukan",
                 "Beri GenKeymapper akses ke Shizuku.", "Beri izin"
-            ) { ShizukuBridge.requestPermission() }
-            ShizukuBridge.State.CONNECTING -> statusRow(
+            ) { Backend.requestPermission() }
+            Backend.State.CONNECTING -> statusRow(
                 c, Ui.WARN, "Menyambung ke layanan input…",
-                "Jika lama, coba sambung ulang.", "Coba lagi"
-            ) { ShizukuBridge.reconnect() }
-            ShizukuBridge.State.READY -> statusRow(
+                "Maksimal 12 detik; jalur input sedang diperiksa.", "Coba lagi"
+            ) { Backend.reconnect() }
+            Backend.State.ERROR -> statusRow(
+                c, Ui.DANGER, "Layanan input gagal", Backend.error, "Coba lagi"
+            ) { Backend.reconnect() }
+            Backend.State.READY -> statusRow(
                 c, Ui.ACCENT, "Shizuku terhubung",
                 "Layanan input siap. Gunakan Uji sentuhan untuk memastikan.", null, null
             )
         }
+        c.addView(Ui.button(this, "Pengaturan latar belakang / baterai") {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+        })
+        c.addView(Ui.sub(this, "HyperOS: izinkan autostart dan pilih baterai Tanpa batasan bila tersedia. Mode offline tidak membutuhkan USB debugging. Untuk Shizuku, aktifkan juga USB debugging (Setelan keamanan)."))
         if (overlayOk()) statusRow(c, Ui.ACCENT, "Tampil di atas aplikasi lain", "Diizinkan.", null, null)
         else statusRow(
             c, Ui.DANGER, "Izin overlay diperlukan",
@@ -240,7 +373,7 @@ class MainActivity : Activity() {
                 requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 21)
             }
         }
-        if (ShizukuBridge.isReady()) {
+        if (Backend.isReady()) {
             c.addView(Ui.divider(this))
             val row = LinearLayout(this)
             row.orientation = LinearLayout.HORIZONTAL
@@ -279,7 +412,7 @@ class MainActivity : Activity() {
         val box = LinearLayout(this)
         box.orientation = LinearLayout.VERTICAL
         box.setPadding(dp(20), dp(8), dp(20), dp(8))
-        val info = Ui.text(this, "Tekan \"Jalankan uji\". GenKeymapper akan mengetuk kotak di bawah lewat Shizuku.", 13f, Ui.SUB)
+        val info = Ui.text(this, "Tekan \"Jalankan uji\". GenKeymapper akan mengetuk kotak di bawah lewat layanan input yang dipilih.", 13f, Ui.SUB)
         val pad = TextView(this)
         pad.text = "Belum ada sentuhan"
         pad.setTextColor(Ui.TEXT)
@@ -311,8 +444,8 @@ class MainActivity : Activity() {
             val x = loc[0] + pad.width / 2f
             val y = loc[1] + pad.height / 2f
             val token = 0x5eed
-            ShizukuBridge.pointer(token, MotionEvent.ACTION_DOWN, x, y)
-            handler.postDelayed({ ShizukuBridge.pointer(token, MotionEvent.ACTION_UP, x, y) }, 70)
+            Backend.pointer(token, MotionEvent.ACTION_DOWN, x, y)
+            handler.postDelayed({ Backend.pointer(token, MotionEvent.ACTION_UP, x, y) }, 70)
             handler.postDelayed({
                 if (!received) {
                     pad.text = "❌ Tidak diterima. Buka Diagnosa untuk melihat penyebabnya."
@@ -324,7 +457,7 @@ class MainActivity : Activity() {
 
     private fun showDiag() {
         Thread {
-            val s = ShizukuBridge.diagBlocking() ?: "Layanan input belum terhubung."
+            val s = Backend.diagBlocking() ?: "Layanan input belum terhubung."
             runOnUiThread {
                 dialog().setTitle("Diagnosa").setMessage(s.replace("; ", "\n")).setPositiveButton("OK", null).show()
             }
@@ -436,9 +569,9 @@ class MainActivity : Activity() {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
             return
         }
-        if (!ShizukuBridge.isReady()) {
-            dialog().setTitle("Shizuku belum terhubung")
-                .setMessage("Tanpa Shizuku, mapping tidak bisa mengirim sentuhan. Lanjutkan juga?")
+        if (!Backend.isReady()) {
+            dialog().setTitle("Layanan input belum terhubung")
+                .setMessage("Layanan input belum siap; mapping belum bisa mengirim sentuhan. Lanjutkan juga?")
                 .setPositiveButton("Lanjutkan") { _, _ -> doStart(pkg, edit) }
                 .setNegativeButton("Batal", null).show()
             return
@@ -625,6 +758,23 @@ class MainActivity : Activity() {
         c.addView(choiceRow("Tombol Mode Bidik", KeyNames.label(store.aimKey)) {
             pickKey("Tombol berpindah Kursor ↔ Bidik", KeyNames.aimKeyChoices, store.aimKey) { store.aimKey = it }
         })
+        c.addView(choiceRow("Kursor sementara (tahan)", KeyNames.label(store.cursorHoldKey)) {
+            pickKey("Tahan untuk kursor; lepas kembali bidik", KeyNames.cursorHoldKeyChoices, store.cursorHoldKey) { store.cursorHoldKey = it }
+        })
+        c.addView(switchRow("Kursor bebas: abaikan mapping mouse", store.freeCursor) { store.freeCursor = it })
+        c.addView(switchRow("Hanya mouse saat kursor terbuka", store.mouseOnlyInCursor) { store.mouseOnlyInCursor = it })
+        c.addView(Ui.button(this, "Terapkan Ctrl + Esc (gaya PC)", filled = true) {
+            store.aimKey = KeyEvent.KEYCODE_CTRL_LEFT
+            store.cursorHoldKey = KeyEvent.KEYCODE_ESCAPE
+            store.freeCursor = true
+            store.mouseOnlyInCursor = true
+            store.profileFor(store.lastPkg)?.startAim = true
+            store.save()
+            stopService(Intent(this, MapperService::class.java))
+            Toast.makeText(this, "Kontrol PC disimpan. Mulai mapping kembali.", Toast.LENGTH_LONG).show()
+            render()
+        })
+        c.addView(Ui.sub(this, "Ctrl: bidik/kursor. Tahan Esc: kursor sementara; lepas: bidik. Saat kursor bebas, klik kiri dan seret mengikuti kursor; mapping klik/roda mouse dinonaktifkan. Hanya mouse mematikan mapping keyboard, kecuali tombol mode dan jeda."))
         c.addView(choiceRow("Tombol Jeda mapping", KeyNames.label(store.pauseKey)) {
             pickKey("Tombol jeda / lanjut", KeyNames.pauseKeyChoices, store.pauseKey) { store.pauseKey = it }
         })
@@ -691,7 +841,7 @@ class MainActivity : Activity() {
         val c = Ui.card(this)
         c.addView(Ui.title(this, "Cara pakai"))
         val steps = listOf(
-            "1. Selesaikan Persiapan di atas sampai Shizuku Terhubung, lalu jalankan Uji sentuhan.",
+            "1. Selesaikan Persiapan di atas sampai layanan input terhubung, lalu jalankan Uji sentuhan.",
             "2. Tambah game, terapkan preset, lalu ketuk Edit untuk menggeser kontrol ke tombol di layar game.",
             "3. Ketuk Main. Overlay aktif dan bubble GEN muncul. Klik tengah mouse berpindah antara Mode Kursor dan Mode Bidik.",
             "4. Mode Kursor: mouse menggerakkan kursor virtual dan klik kiri mengetuk. Mode Bidik: mouse memutar kamera, klik kiri menembak.",

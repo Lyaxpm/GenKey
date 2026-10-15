@@ -38,8 +38,20 @@ class MappingStore(ctx: Context) : EngineSettings {
         set(v) = prefs.edit().putFloat("hintOpacity", v.coerceIn(0.1f, 1f)).apply()
 
     override var aimKey: Int
-        get() = prefs.getInt("aimKey", KeyNames.MOUSE_MIDDLE)
+        get() = prefs.getInt("aimKey", KeyEvent.KEYCODE_CTRL_LEFT)
         set(v) = prefs.edit().putInt("aimKey", v).apply()
+
+    override var cursorHoldKey: Int
+        get() = prefs.getInt("cursorHoldKey", KeyEvent.KEYCODE_ESCAPE)
+        set(v) = prefs.edit().putInt("cursorHoldKey", v).apply()
+
+    override var freeCursor: Boolean
+        get() = prefs.getBoolean("freeCursor", true)
+        set(v) = prefs.edit().putBoolean("freeCursor", v).apply()
+
+    override var mouseOnlyInCursor: Boolean
+        get() = prefs.getBoolean("mouseOnlyInCursor", true)
+        set(v) = prefs.edit().putBoolean("mouseOnlyInCursor", v).apply()
 
     var pauseKey: Int
         get() = prefs.getInt("pauseKey", KeyEvent.KEYCODE_F8)
@@ -142,7 +154,7 @@ class MappingStore(ctx: Context) : EngineSettings {
             PRESET_FPS -> fpsPreset()
             else -> mmorpgPreset()
         }
-        p.startAim = preset == PRESET_FPS
+        p.startAim = preset == PRESET_FPS || freeCursor
         save()
     }
 

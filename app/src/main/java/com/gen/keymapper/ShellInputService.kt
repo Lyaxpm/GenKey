@@ -187,7 +187,7 @@ class ShellInputService : IInputBridge.Stub() {
                 val index = touches.size - 1
                 val a = if (index == 0) MotionEvent.ACTION_DOWN
                 else MotionEvent.ACTION_POINTER_DOWN or (index shl MotionEvent.ACTION_POINTER_INDEX_SHIFT)
-                if (!send(a, 1)) {
+                if (!send(a, 0)) {
                     touches.remove(token)
                     if (touches.isEmpty()) downTime = 0
                 }
@@ -207,7 +207,7 @@ class ShellInputService : IInputBridge.Stub() {
                 }
                 val a = if (touches.size == 1) MotionEvent.ACTION_UP
                 else MotionEvent.ACTION_POINTER_UP or (index shl MotionEvent.ACTION_POINTER_INDEX_SHIFT)
-                send(a, 1)
+                send(a, 0)
                 touches.remove(token)
                 if (touches.isEmpty()) downTime = 0
             }
@@ -234,12 +234,12 @@ class ShellInputService : IInputBridge.Stub() {
             now, now, KeyEvent.ACTION_DOWN, keyCode, 0, 0,
             KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0, InputDevice.SOURCE_KEYBOARD
         )
-        inject(down, 1)
+        inject(down, 0)
         val up = KeyEvent(
             now, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, keyCode, 0, 0,
             KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0, InputDevice.SOURCE_KEYBOARD
         )
-        inject(up, 1)
+        inject(up, 0)
     }
 
     // ---------- umum ----------
